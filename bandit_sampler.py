@@ -1,5 +1,6 @@
 # Following from author code cpython version: https://github.com/xavierzw/ogb-geniepath-bs/blob/master/cython_sampler/cython_sampler.pyx
 import numpy as np
+import math
 
 
 class BanditSampler:
@@ -49,9 +50,83 @@ class BanditSampler:
     def get_sample_weights(self, src):
       return self.sample_weight[src]
 
+    def update_sample_weights(self, att_map, p, num_data, src_list, dst_list, att_list, neighbor_limit, delta):
+      i = 0
+      src = 0
+      dst = 0
+      degree = 0
+      idx = 0
+      att_val = 0
+      reward = 0
+      while i < num_data:
+        if i % self.num_proc != p:
+          i += 1
+          continue
+        src = src_list[i]
+        dst = dst_list[i]
+        degree = self.degree[src]
+        if degree <= neighbor_limit:
+          i += 1
+          continue
+        delta = delta/degree**2
+        idx = self.sample_index[src][dst]
+        att_val = att_list[att_map[src][dst]]
+        reward = delta*att_val**2/self.sample_probs[src][dst]**2
+        if reward > self.max_reward:
+          reward = self.max_reward
+        self.sample_weights[src][idx] *= math.exp(reward)
+        i += 1
+
+    def update_sample_probs(self, p, num_data, src_list, eta):
+      i = 0
+      idx = 0
+      dst = 0
+      degree = 0
+      unifom_prob = 0
+      src = 0
+      while i < num_data:
+        if i % self.num_proc != p:
+          i += 1
+          continue
+        src = src_list[i]
+        degree = self.degree[src]
+        if degree <= self.neighbor_limit:
+          i += 1
+          continue
+        weight_sum = sum(self.sample_weights[src])
+        unifom_prob = 1./degree
+
+        idx = 0
+        while idx < degree:
+          dst = self.adj[src][idx]
+          self.sample_probs[src][idx] = (1-eta)*self.sample_weights[src][idx] / weight_sum+ eta*unifom_prob
+          idx += 1
+
+        i += 1
+
     def update(self, src_list, dst_list, att_list):
       """Using exp3"""
-      pass
+      
+      num_data = len(src_list)
+      att_map = None
+      i = 0
+      while i < num_data:
+        att_map[src_list[i]][dst_list[i]] = 1
+        i + 1
+
+      p = 0
+      neighbor_limit = self.neighbor_limit
+      delta = self.delta
+      for p in range(self.num_proc):
+        self.update_sample_weights(att_map, p. num_data, src_list, dst_list, att_list, neighbor_limit, delta)
+
+      eta = self.data
+      src_set = list(set(src_list))
+      num_data = len(src_set)
+      for p in range(self.num_proc):
+        self.update_sample_probs(p, num_data, src_set, eta)
+
+
 
     def sample(self, node, sample_size):
       degree = self.degree[node]
@@ -63,3 +138,6 @@ class BanditSampler:
         print(probs)
         neighbors = np.random.choice(probs, sample_size, p=probs, replace=False)
       return neighbors
+
+    def sample_graph():
+      pass
