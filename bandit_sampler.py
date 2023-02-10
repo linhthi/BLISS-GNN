@@ -126,8 +126,6 @@ class BanditSampler:
       for p in range(self.num_proc):
         self.update_sample_probs(p, num_data, src_set, eta)
 
-
-
     def sample(self, node, sample_size):
       degree = self.degree[node]
       neighbors = []
@@ -139,5 +137,74 @@ class BanditSampler:
         neighbors = np.random.choice(probs, sample_size, p=probs, replace=False)
       return neighbors
 
-    def sample_graph():
-      pass
+    def sample_graph(self, roots):
+      roots = []
+      edges = None
+      edges_all = [[] for i in range(self.num_proc)]
+      n_depth_all = [set() for i in range(self.num_proc)]
+      for p in range(self.num_proc):
+        self.sample_graph_v1(p, roots, edges_all[p], n_depth_all[p])
+      
+      edge_size = edges.size()
+      while i < self.num_proc:
+        edge_size += edges_all[i].size()
+        i += 1
+      edges.reverse(edge_size)
+      i = 0
+      k = 0
+      while i < self.num_proc:
+        edges.append(edges[-1], edges_all[i][0], edges_all[i][1])
+        it = n_depth_all[i][0]
+        while it != n_depth_all[i][1]:
+          found = roots.find(it)
+          if found != roots[-1]:
+            it += 1
+            continue
+          n_depth.insert(it)
+        i += 1
+
+      sort(edges.begin(), edges.end())
+      w_edges =  edges
+      np_edges = np.frombuffer(w_edges, dtype=np.int32)
+      np_edges = np_edges.reshape([-1,2])
+      return np_edge
+
+
+    def sample_graph_v1(self, p, num_data, roots, edges, n_depth):
+      i  = 0
+      while i < num_data:
+        if i % self.num_proc != p:
+          i += 1
+          continue
+        node = roots[i]
+        sample_size = self.sample_neighbors(node, edges, n_depth)
+        i += 1
+
+    def sample_neighbors(self, node, edges, n_depth):
+      sample_size = 0
+      neigbors = self.adj[node]
+      degree = self.degree[node]
+      edge_size = edges.shape[0]
+      sample_probs = self.sample_probs[node]
+      if degree <= self.neighbor_limit:
+        edges.resize(edge_size + degree*2)
+        i = 0
+        while i < degree:
+          edges[edge_size+2*i] = node
+          edges[edge_size+2*i+1] = neigbors[i]
+          n_depth.insert(neigbors[i])
+          i += 1
+        sample_size = degree
+      else:
+        edges.resize(edge_size + self.neighbor_limit*2)
+        samples = random_choice(deref(neighbors), deref(sample_probs), self.neighbor_limit)
+
+        i = 0
+        while i < self.neighbor_limit:
+            sample_id = samples[i]
+            edges[edge_size+2*i] = node
+            edges[edge_size+2*i+1] = sample_id
+            n_depth.insert(sample_id)
+            i += 1
+            sample_size += 1
+      return sample_size
