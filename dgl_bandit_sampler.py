@@ -19,7 +19,32 @@ def normalized_edata(g, weight=None):
         g.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
         return g.edata['w']
 
-class LadiesSampler(dgl.dataloading.BlockSampler):
+def update_probability(prob, chosen_node, rewards, eta):
+    """
+    Update the probability of each node being selected using the rewards obtained
+    from the previous selection.
+
+    Parameters
+    ----------
+    prob : numpy.ndarray
+        Unnormalized probability distribution of nodes in the current subgraph.
+    chosen_node : int
+        The index of the node that was selected in the previous iteration.
+    rewards : numpy.ndarray
+        The rewards obtained for each node in the previous iteration.
+    eta : float
+        Learning rate for updating the probability.
+
+    Returns
+    -------
+    numpy.ndarray
+        Updated unnormalized probability distribution.
+    """
+    # Update the probability distribution
+    prob[chosen_node] += eta * (rewards[chosen_node] - prob[chosen_node])
+    return prob
+
+class BanditSampler(dgl.dataloading.BlockSampler):
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights', replace=False):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
@@ -47,6 +72,8 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
             prob = torch.ones(insg.num_nodes())
             prob[insg.out_degrees() == 0] = 0
         return prob, insg
+
+    
 
     def select_neighbors(self, prob, num):
         """
@@ -102,8 +129,37 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
         sg_eids = insg.edata[dgl.EID][sg.edata[dgl.EID].long()]
         block.edata[dgl.EID] = sg_eids[block.edata[dgl.EID].long()]
         return block
+
+    def compute_reward(self, insg, seed_nodes):
+        """
+        Compute the reward for each node in the subgraph @insg, given the seed nodes @seed_nodes.
+        insg : the subgraph to compute rewards for
+        seed_nodes : the indices of the seed nodes
+        return : the reward for each node in the subgraph
+        """
+        n_nodes = insg.num_nodes()
+        reward = torch.zeros((n_nodes,)).float()
+
+        # Set the reward of seed nodes to 1.0
+        seed_nodes_idx = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
+        reward[seed_nodes_idx] = 1.0
+
+        # Compute the reward for other nodes using the weighted average of their neighbors' rewards
+        W = insg.edata[self.output_weight]
+        g = dgl.remove_self_loop(insg)
+        norm = dgl.ops.copy_e_sum(g, W)
+        norm[norm == 0] = 1  # avoid division by zero
+        norm = norm.repeat_interleave(g.in_degrees())
+        W = W / norm
+        reward_neighbors = reward[g.srcdata[dgl.NID]]
+        reward_neighbors = dgl.ops.segment_sum(W * reward_neighbors, g.edata[dgl.EID])
+        reward_neighbors /= g.in_degrees().float().to(reward_neighbors.device)
+        reward[g.dstdata[dgl.NID]] = reward_neighbors
+
+        return reward
+
     
-    def sample_blocks(self, g, seed_nodes, exclude_eids=None):
+    def sample_blocks(self, g, seed_nodes, exclude_eids=None, eta=0.1):
         output_nodes = seed_nodes
         seed_nodes = torch.tensor(seed_nodes)
         blocks = []
@@ -112,9 +168,13 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
             W = g.edata[self.edge_weight]
             prob, insg = self.compute_prob(g, seed_nodes, W, num_nodes_to_sample)
             cand_nodes = insg.ndata[dgl.NID]
-            print(cand_nodes)
-            neighbor_nodes_idx = torch.tensor(self.select_neighbors(prob, num_nodes_to_sample))
-            print((prob/prob.sum()))
+            
+            # Apply bandit algorithm to choose the nodes
+            rewards = self.compute_reward(insg, seed_nodes)
+            chosen_node = select_node(insg, prob)
+            prob = update_probability(prob, chosen_node, rewards, eta)
+            neighbor_nodes_idx = insg.successors(chosen_node).t()
+            
             block = self.generate_block(
                 insg, neighbor_nodes_idx.type(g.idtype), seed_nodes.type(g.idtype), prob,
                 W[insg.edata[dgl.EID].long()])

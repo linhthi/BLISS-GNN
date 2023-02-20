@@ -177,34 +177,49 @@ class BanditSampler:
           i += 1
           continue
         node = roots[i]
-        sample_size = self.sample_neighbors(node, edges, n_depth)
+        sample_size = self.sample_neighbors_v1(node, edges, n_depth)
         i += 1
 
-    def sample_neighbors(self, node, edges, n_depth):
+    def sample_graph_v2(self, p, num_data, roots, edges):
+      i = 0
+      node = 0
+      while i < num_data:
+        if i % self.num_proc != p:
+          i += 1
+          continue
+        node = roots[i]
+        self.sample_neighbors_v2(node, edges)
+        i += 1
+
+
+    def sample_neighbors_v1(self, node: int, edges: List[int], n_depth: Set[int]):
       sample_size = 0
       neigbors = self.adj[node]
       degree = self.degree[node]
-      edge_size = edges.shape[0]
+      edge_size = len(edges)
       sample_probs = self.sample_probs[node]
       if degree <= self.neighbor_limit:
-        edges.resize(edge_size + degree*2)
-        i = 0
-        while i < degree:
-          edges[edge_size+2*i] = node
-          edges[edge_size+2*i+1] = neigbors[i]
-          n_depth.insert(neigbors[i])
-          i += 1
+        for i in range(degree):
+          edges.extend([node, self.adj[node][i]])
+          n_depth.add(self.adj[node][i])
         sample_size = degree
       else:
-        edges.resize(edge_size + self.neighbor_limit*2)
-        samples = random_choice(deref(neighbors), deref(sample_probs), self.neighbor_limit)
-
-        i = 0
-        while i < self.neighbor_limit:
-            sample_id = samples[i]
-            edges[edge_size+2*i] = node
-            edges[edge_size+2*i+1] = sample_id
-            n_depth.insert(sample_id)
-            i += 1
-            sample_size += 1
+        samples = random.choices(self.adj[node], weights=self.sample_probs[node], k=self.neighbor_limit)
+        for sample_id in samples:
+          edges.extend([node, sample_id])
+          n_depth.add(sample_id)
+          sample_size += 1
       return sample_size
+
+    def sample_neighbors_v2(self, node: int, edges: List[int]):
+      degree = self.degree[node]
+      edge_size = len(edges)
+      neighbors = self.adj[node]
+      samples = []
+      sample_probs = self.sample_probs[node]
+      if degree <= self.neighbor_limit:
+        edges.extend([node, neighbor] for neighbor in neighbors)
+      else:
+        samples = random_choice(neighbors, sample_probs, self.neighbor_limit)
+        for i in range(self.neighbor_limit):
+            edges.extend([node, samples[i]])
