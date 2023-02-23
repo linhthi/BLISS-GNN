@@ -1,5 +1,10 @@
 # source: https://github.com/dmlc/dgl/blob/d024c1547279d837350bd356df9b693d44bb49e2/examples/pytorch/labor/ladies_sampler.py#L25
 import dgl.function as fn
+import dgl
+import torch
+import numpy as np
+import torch.nn.functional as F
+
 
 def find_indices_in(a, b):
     b_sorted, indices = torch.sort(b)
@@ -92,6 +97,23 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         neighbor_nodes_idx = torch.multinomial(prob, min(num, prob.shape[0]), replacement=self.replace)
         return neighbor_nodes_idx
     
+    def select_node(self, g, prob):
+        """
+        Select a node from the graph based on the given probability distribution.
+        Args:
+            g (dgl.DGLGraph): The entire graph.
+            prob (np.array): Probability distribution over the nodes.
+        Returns:
+            Tuple[int, int]: ID and index of the selected node.
+        """
+        print(prob)
+        prob /= prob.sum()
+        print(prob)
+        nodes = np.arange(g.number_of_nodes())
+        print(nodes)
+        # return np.random.choice(nodes, p=prob)
+        return torch.multinomial(prob, min(1, prob.shape[0]), replacement=self.replace)
+    
     def generate_block(self, insg, neighbor_nodes_idx, seed_nodes, P_sg, W_sg):
         """
         insg : the subgraph yielded by compute_prob()
@@ -137,6 +159,8 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         seed_nodes : the indices of the seed nodes
         return : the reward for each node in the subgraph
         """
+        
+        # TODO: implement the right reward function
         n_nodes = insg.num_nodes()
         reward = torch.zeros((n_nodes,)).float()
 
@@ -145,17 +169,22 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         reward[seed_nodes_idx] = 1.0
 
         # Compute the reward for other nodes using the weighted average of their neighbors' rewards
-        W = insg.edata[self.output_weight]
+        W = insg.edata['w']
+        print(insg.edges())
         g = dgl.remove_self_loop(insg)
         norm = dgl.ops.copy_e_sum(g, W)
         norm[norm == 0] = 1  # avoid division by zero
         norm = norm.repeat_interleave(g.in_degrees())
         W = W / norm
+        print(reward)
+        print(g.srcdata[dgl.NID])
         reward_neighbors = reward[g.srcdata[dgl.NID]]
-        reward_neighbors = dgl.ops.segment_sum(W * reward_neighbors, g.edata[dgl.EID])
+        print(reward_neighbors)
+        print(W)
+        # reward_neighbors = W * reward_neighbors*g.ndata['nfeat']
         reward_neighbors /= g.in_degrees().float().to(reward_neighbors.device)
         reward[g.dstdata[dgl.NID]] = reward_neighbors
-
+        reward[torch.isnan(reward)] = 0
         return reward
 
     
@@ -168,10 +197,17 @@ class BanditSampler(dgl.dataloading.BlockSampler):
             W = g.edata[self.edge_weight]
             prob, insg = self.compute_prob(g, seed_nodes, W, num_nodes_to_sample)
             cand_nodes = insg.ndata[dgl.NID]
+            print("candidate nodes: ", cand_nodes)
             
+            print("Insg: ", insg)
+            print("Seed nodes: ", seed_nodes)
+            print((prob/prob.sum()))
+
             # Apply bandit algorithm to choose the nodes
             rewards = self.compute_reward(insg, seed_nodes)
-            chosen_node = select_node(insg, prob)
+            print("Rewards: ", rewards)
+            chosen_node = self.select_node(insg, prob)
+            print("Choose node: ", chosen_node)
             prob = update_probability(prob, chosen_node, rewards, eta)
             neighbor_nodes_idx = insg.successors(chosen_node).t()
             

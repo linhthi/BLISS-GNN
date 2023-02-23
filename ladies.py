@@ -1,5 +1,8 @@
 # source: https://github.com/dmlc/dgl/blob/d024c1547279d837350bd356df9b693d44bb49e2/examples/pytorch/labor/ladies_sampler.py#L25
 import dgl.function as fn
+import dgl
+import torch
+
 
 def find_indices_in(a, b):
     b_sorted, indices = torch.sort(b)
@@ -64,19 +67,6 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
         # This is why we need a find_indices_in() function.
         neighbor_nodes_idx = torch.multinomial(prob, min(num, prob.shape[0]), replacement=self.replace)
         return neighbor_nodes_idx
-
-    def select_node(self, g, prob):
-        """
-        Select a node from the graph based on the given probability distribution.
-        Args:
-            g (dgl.DGLGraph): The entire graph.
-            prob (np.array): Probability distribution over the nodes.
-        Returns:
-            Tuple[int, int]: ID and index of the selected node.
-        """
-        prob = prob / np.sum(prob)
-        nodes = np.arange(g.number_of_nodes())
-        return np.random.choice(nodes, p=prob)
     
     def generate_block(self, insg, neighbor_nodes_idx, seed_nodes, P_sg, W_sg):
         """
