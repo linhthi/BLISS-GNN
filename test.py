@@ -29,7 +29,7 @@ prob = torch.tensor([0, 0, 0.5, 0.5, 0])
 torch.multinomial(prob, min(3, len(prob)), replacement=False)
 
 
-bandit = BanditSampler([1], weight='w')
+bandit = BanditSampler([2], weight='w')
 seed_nodes, output_nodes, blocks = bandit.sample_blocks(g, [0, 1])
 print("Seed nodes: ", seed_nodes)
 print("Output nodes: ", output_nodes)

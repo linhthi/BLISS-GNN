@@ -24,17 +24,17 @@ def normalized_edata(g, weight=None):
         g.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
         return g.edata['w']
 
-def update_probability(prob, chosen_node, rewards, eta):
+def update_probability(prob, chosen_nodes, rewards, eta):
     """
     Update the probability of each node being selected using the rewards obtained
-    from the previous selection.
+    from the previous selection using exp3 algo.
 
     Parameters
     ----------
     prob : numpy.ndarray
         Unnormalized probability distribution of nodes in the current subgraph.
-    chosen_node : int
-        The index of the node that was selected in the previous iteration.
+    chosen_nodes : list
+        The index of the nodes that was selected in the previous iteration.
     rewards : numpy.ndarray
         The rewards obtained for each node in the previous iteration.
     eta : float
@@ -46,7 +46,21 @@ def update_probability(prob, chosen_node, rewards, eta):
         Updated unnormalized probability distribution.
     """
     # Update the probability distribution
-    prob[chosen_node] += eta * (rewards[chosen_node] - prob[chosen_node])
+    # prob[chosen_node] += eta * (rewards[chosen_node] - prob[chosen_node])
+    num_chosen = len(chosen_nodes)
+    total_reward = rewards.sum()
+    avg_reward = total_reward / num_chosen
+
+    # Compute exponential weight for each chosen node
+    exp_weights = torch.exp(eta * rewards)
+
+    # Update probability for chosen nodes
+    for i in range(num_chosen):
+        node = chosen_nodes[i]
+        prob[node] = (1 - eta) * prob[node] + (eta * (exp_weights[i] / sum(exp_weights)))
+
+    # Normalize probability distribution
+    # prob /= prob.sum()
     return prob
 
 class BanditSampler(dgl.dataloading.BlockSampler):
@@ -206,10 +220,14 @@ class BanditSampler(dgl.dataloading.BlockSampler):
             # Apply bandit algorithm to choose the nodes
             rewards = self.compute_reward(insg, seed_nodes)
             print("Rewards: ", rewards)
-            chosen_node = self.select_node(insg, prob)
-            print("Choose node: ", chosen_node)
-            prob = update_probability(prob, chosen_node, rewards, eta)
-            neighbor_nodes_idx = insg.successors(chosen_node).t()
+            # chosen_node = self.select_node(insg, prob)
+            chosen_nodes = self.select_neighbors(prob, num_nodes_to_sample)
+            print(chosen_nodes)
+            neighbor_nodes_idx = chosen_nodes
+            print("Choose node: ", chosen_nodes)
+            prob = update_probability(prob, chosen_nodes, rewards, eta)
+            print("Updated prob: ", prob)
+            # neighbor_nodes_idx = insg.successors(chosen_node).t()
             
             block = self.generate_block(
                 insg, neighbor_nodes_idx.type(g.idtype), seed_nodes.type(g.idtype), prob,
