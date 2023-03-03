@@ -25,11 +25,16 @@ prob = dgl.ops.copy_e_sum(out_frontier, weight ** 2)
 
 print("Probcability of nodes: ", prob)
 
-prob = torch.tensor([0, 0, 0.5, 0.5, 0])
-torch.multinomial(prob, min(3, len(prob)), replacement=False)
+# prob = torch.tensor([0, 0, 0.5, 0.5, 0])
+# torch.multinomial(prob, min(3, len(prob)), replacement=False)
 
 
 bandit = BanditSampler([2], weight='w')
 seed_nodes, output_nodes, blocks = bandit.sample_blocks(g, [0, 1])
-print("Seed nodes: ", seed_nodes)
-print("Output nodes: ", output_nodes)
+print("Bandit Seed nodes: ", seed_nodes)
+print("Bandit Output nodes: ", output_nodes)
+
+ladies = LadiesSampler([2], weight='w')
+seed_nodes, output_nodes, blocks = ladies.sample_blocks(g, [0, 1])
+print("Ladies Seed nodes: ", seed_nodes)
+print("Ladies Output nodes: ", output_nodes)

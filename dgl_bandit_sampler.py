@@ -95,7 +95,7 @@ class BanditSampler(dgl.dataloading.BlockSampler):
             out_frontier = dgl.reverse(insg, copy_edata=True)
             weight = weight[out_frontier.edata[dgl.EID].long()]
             prob = dgl.ops.copy_e_sum(out_frontier, weight ** 2)
-            # prob = torch.sqrt(prob)
+            prob = torch.sqrt(prob)
         else:
             prob = torch.ones(insg.num_nodes())
             prob[insg.out_degrees() == 0] = 0
@@ -189,17 +189,17 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         # calculate alpha_ij
         alpha = torch.Tensor(insg.edata['w']).to(device)
 
-        # calculate h_j(t)
-        h_j = insg.ndata['nfeat'].to(device)
+        # calculate ||h_j(t)|| 
+        h_j = insg.ndata['nfeat'].to(device) # embedding of each node at layer L
         h_j_norm = torch.norm(h_j, dim=1, keepdim=True)
         # print(h_j_norm.shape)
 
         # calculate the reward
         # r = (alpha ** 2) / (k * (q_j ** 2)) * h_j_norm ** 2
-        r = dgl.ops.e_div_u(insg, (alpha ** 2), (k * (q ** 2)))
+        # r = dgl.ops.e_div_u(insg, (alpha ** 2), (k * (q ** 2)))
         # print(r)
         # print("R1: ", r.shape)
-        r = dgl.ops.e_mul_v(insg, r, h_j_norm ** 2)
+        r = dgl.ops.e_mul_v(insg, alpha ** 2, h_j_norm ** 2)
         # print(r.shape)
 
         return r
