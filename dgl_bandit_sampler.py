@@ -66,7 +66,7 @@ def update_probability(prob, chosen_nodes, rewards, eta, k, n, T):
     # Update probability for chosen nodes
     for i in range(num_chosen):
         node = chosen_nodes[i]
-        prob[node] = (1 - eta) * prob[node] + (eta * (exp_weights[i] / sum(exp_weights)))
+        prob[node] = (1 - eta) * (eta * (exp_weights[i] / sum(exp_weights))) + eta / n
 
     # Normalize probability distribution
     # prob /= prob.sum()
@@ -175,66 +175,31 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         block.edata[dgl.EID] = sg_eids[block.edata[dgl.EID].long()]
         return block
 
-    def compute_reward(self, insg, seed_nodes):
-        """
-        Compute the reward for each node in the subgraph @insg, given the seed nodes @seed_nodes.
-        insg : the subgraph to compute rewards for
-        seed_nodes : the indices of the seed nodes
-        return : the reward for each node in the subgraph
-        """
-        
-        # TODO: implement the right reward function
-        n_nodes = insg.num_nodes()
-        reward = torch.zeros((n_nodes,)).float()
-
-        # Set the reward of seed nodes to 1.0
-        seed_nodes_idx = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
-        reward[seed_nodes_idx] = 1.0
-
-        # Compute the reward for other nodes using the weighted average of their neighbors' rewards
-        W = insg.edata['w']
-        print(insg.edges())
-        g = dgl.remove_self_loop(insg)
-        norm = dgl.ops.copy_e_sum(g, W)
-        norm[norm == 0] = 1  # avoid division by zero
-        norm = norm.repeat_interleave(g.in_degrees())
-        W = W / norm
-        print(reward)
-        print(g.srcdata[dgl.NID])
-        reward_neighbors = reward[g.srcdata[dgl.NID]]
-        print(reward_neighbors)
-        print(W)
-        # reward_neighbors = W * reward_neighbors*g.ndata['nfeat']
-        reward_neighbors /= g.in_degrees().float().to(reward_neighbors.device)
-        reward[g.dstdata[dgl.NID]] = reward_neighbors
-        reward[torch.isnan(reward)] = 0
-        return reward
-
-    def calculate_reward(self, g, q):
+    def calculate_reward(self, insg, q):
         """
         Calculate the reward for each node in the graph @g, given the probability distribution @q.
-        g : the graph to compute rewards for
+        insg : the graph to compute rewards for
         q : the probability distribution over the nodes
         return : the reward for each node in the graph
         """
-        
-        k = g.num_nodes()
+
+        k = insg.num_nodes()
         device = q.device
 
         # calculate alpha_ij
-        alpha = torch.Tensor(g.edata['w']).to(device)
+        alpha = torch.Tensor(insg.edata['w']).to(device)
 
         # calculate h_j(t)
-        h_j = g.ndata['nfeat'].to(device)
+        h_j = insg.ndata['nfeat'].to(device)
         h_j_norm = torch.norm(h_j, dim=1, keepdim=True)
         # print(h_j_norm.shape)
 
         # calculate the reward
         # r = (alpha ** 2) / (k * (q_j ** 2)) * h_j_norm ** 2
-        r = dgl.ops.e_div_u(g, (alpha ** 2), (k * (q ** 2)))
+        r = dgl.ops.e_div_u(insg, (alpha ** 2), (k * (q ** 2)))
         # print(r)
         # print("R1: ", r.shape)
-        r = dgl.ops.e_mul_v(g, r, h_j_norm ** 2)
+        r = dgl.ops.e_mul_v(insg, r, h_j_norm ** 2)
         # print(r.shape)
 
         return r
