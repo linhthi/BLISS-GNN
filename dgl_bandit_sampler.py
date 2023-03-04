@@ -51,19 +51,19 @@ def update_probability(prob, chosen_nodes, rewards, eta, k, n, T):
     numpy.ndarray
         Updated unnormalized probability distribution.
     """
-    # Update the probability distribution
+    # Update the probability distribution for each node
     num_chosen = len(chosen_nodes)
     total_reward = rewards.sum()
     avg_reward = total_reward / num_chosen
 
-    # Calculate the delta value
+    # Calculate the delta value for exp3
     delta = math.sqrt((1-eta)*eta**4*k**5*math.log(n/k)/(T*n**4))
     # delta = 1
 
     # Compute exponential weight for each chosen node
     exp_weights = torch.exp(delta * rewards)
 
-    # Update probability for chosen nodes
+    # Update probability for chosen nodes and normalize
     for i in range(num_chosen):
         node = chosen_nodes[i]
         prob[node] = (1 - eta) * (eta * (exp_weights[i] / sum(exp_weights))) + eta / n
@@ -158,6 +158,8 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         eg.edata[dgl.EID] = sg.edata[dgl.EID][eg.edata[dgl.EID].long()]
         sg = eg
         nids = insg.ndata[dgl.NID][sg.ndata[dgl.NID].long()]
+
+        # Normalize probability distribution
         P = P_sg[u_nodes.long()]
         W = W_sg[sg.edata[dgl.EID].long()]
         W_tilde = dgl.ops.e_div_u(sg, W, P)
@@ -167,6 +169,7 @@ class BanditSampler(dgl.dataloading.BlockSampler):
 
         block = dgl.to_block(sg, seed_nodes_idx.type(sg.idtype))
         block.edata[self.output_weight] = W_tilde
+
         # correct node ID mapping
         block.srcdata[dgl.NID] = nids[block.srcdata[dgl.NID].long()]
         block.dstdata[dgl.NID] = nids[block.dstdata[dgl.NID].long()]
@@ -186,20 +189,24 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         k = insg.num_nodes()
         device = q.device
 
-        # calculate alpha_ij
-        alpha = torch.Tensor(insg.edata['w']).to(device)
+        # calculate alpha_ij from Edge weights values of the batch graph, this weights can be different for each layer L
+        alpha = torch.Tensor(insg.edata['w']).to(device) 
 
         # calculate ||h_j(t)|| 
-        h_j = insg.ndata['nfeat'].to(device) # embedding of each node at layer L
-        h_j_norm = torch.norm(h_j, dim=1, keepdim=True)
+        # h_j should be embedding of each node at layer L
+        # Compute the L2 norm of node embeddings
+        h_j = insg.ndata['nfeat'].to(device)
+        h_j_norm = torch.norm(h_j, dim=1, keepdim=True) 
         # print(h_j_norm.shape)
 
         # calculate the reward
+        # Because the edge weights are normalized, we don't need to divide by q_j
         # r = (alpha ** 2) / (k * (q_j ** 2)) * h_j_norm ** 2
         # r = dgl.ops.e_div_u(insg, (alpha ** 2), (k * (q ** 2)))
         # print(r)
         # print("R1: ", r.shape)
-        r = dgl.ops.e_mul_v(insg, alpha ** 2, h_j_norm ** 2)
+        # Compute reward as element-wise product of edge weight and node L2 norm squared
+        r = dgl.ops.e_mul_v(insg, alpha ** 2, h_j_norm ** 2) 
         # print(r.shape)
 
         return r
