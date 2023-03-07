@@ -7,22 +7,29 @@ import torch.nn.functional as F
 import math
 
 def find_indices_in(a, b):
+    # sort b in ascending order by value, and indices of the elements in the original input tensor.
     b_sorted, indices = torch.sort(b)
+    # find indices of a where elements should be inserted in b to maintain order.
+    # e.g., b = [1, 2, 3, 4, 5], a = [-10, 10, 2, 3] >>> [0, 5, 1, 2]
     sorted_indices = torch.searchsorted(b_sorted, a)
+    # remove sorted_indices of value >= 0-dimension (rows) of the indices
     sorted_indices[sorted_indices >= indices.shape[0]] = 0
+    # return the matched indices of a in b
     return indices[sorted_indices]
 
 def union(*arrays):
+    # concat the passed arrays vertically and return the unique values only as 1-dim tensor
     return torch.unique(torch.cat(arrays))
 
-def normalized_edata(g, weight=None):
-    with g.local_scope():
-        if weight is None:
-            weight = 'W'
-            g.edata[weight] = torch.ones(g.number_of_edges(), device=g.device)
-        g.update_all(fn.copy_e(weight, weight), fn.sum(weight, 'v'))
-        g.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
-        return g.edata['w']
+# # not used
+# def normalized_edata(g, weight=None):
+#     with g.local_scope():
+#         if weight is None:
+#             weight = 'W'
+#             g.edata[weight] = torch.ones(g.number_of_edges(), device=g.device)
+#         g.update_all(fn.copy_e(weight, weight), fn.sum(weight, 'v'))
+#         g.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
+#         return g.edata['w']
 
 def update_probability(prob, chosen_nodes, rewards, eta, k, n, T):
     """
@@ -52,23 +59,30 @@ def update_probability(prob, chosen_nodes, rewards, eta, k, n, T):
         Updated unnormalized probability distribution.
     """
     # Update the probability distribution for each node
+    # [?] the same as n, can we remove n?
     num_chosen = len(chosen_nodes)
-    total_reward = rewards.sum()
-    avg_reward = total_reward / num_chosen
+    
+    # total_reward = rewards.sum()
+    # avg_reward = total_reward / num_chosen
 
     # Calculate the delta value for exp3
     delta = math.sqrt((1-eta)*eta**4*k**5*math.log(n/k)/(T*n**4))
     # delta = 1
 
     # Compute exponential weight for each chosen node
+    # [!] add `rewards_hat = rewards / prob`, default `prob = 1/N_i` , where N_i is all neighbors of i
+    # [?] should the equation be: `exp_weights = wij * torch.exp(delta * rewards_hat / n)`,
+    # [!] add new parameter `weights`, default `wij = 1`.
     exp_weights = torch.exp(delta * rewards)
+
 
     # Update probability for chosen nodes and normalize
     for i in range(num_chosen):
         node = chosen_nodes[i]
+        # [?] should the equation be: `prob[node] = (1 - eta) * (exp_weights[i] / sum(exp_weights)) + (eta / n)`
         prob[node] = (1 - eta) * (eta * (exp_weights[i] / sum(exp_weights))) + eta / n
 
-    # Normalize probability distribution
+    # # Normalize probability distribution
     # prob /= prob.sum()
     return prob
 
@@ -89,6 +103,7 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         return : the unnormalized probability of the candidate nodes, as well as the subgraph
                  containing all the edges from the candidate nodes to the output nodes.
         """
+        # 
         insg = dgl.in_subgraph(g, seed_nodes)
         insg = dgl.compact_graphs(insg, seed_nodes)
         if self.importance_sampling:
@@ -120,22 +135,22 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         neighbor_nodes_idx = torch.multinomial(prob, min(num, prob.shape[0]), replacement=self.replace)
         return neighbor_nodes_idx
     
-    def select_node(self, g, prob):
-        """
-        Select a node from the graph based on the given probability distribution.
-        Args:
-            g (dgl.DGLGraph): The entire graph.
-            prob (np.array): Probability distribution over the nodes.
-        Returns:
-            Tuple[int, int]: ID and index of the selected node.
-        """
-        print(prob)
-        prob /= prob.sum()
-        print(prob)
-        nodes = np.arange(g.number_of_nodes())
-        print(nodes)
-        # return np.random.choice(nodes, p=prob)
-        return torch.multinomial(prob, min(1, prob.shape[0]), replacement=self.replace)
+    # def select_node(self, g, prob):
+    #     """
+    #     Select a node from the graph based on the given probability distribution.
+    #     Args:
+    #         g (dgl.DGLGraph): The entire graph.
+    #         prob (np.array): Probability distribution over the nodes.
+    #     Returns:
+    #         Tuple[int, int]: ID and index of the selected node.
+    #     """
+    #     print(prob)
+    #     prob /= prob.sum()
+    #     print(prob)
+    #     nodes = np.arange(g.number_of_nodes())
+    #     print(nodes)
+    #     # return np.random.choice(nodes, p=prob)
+    #     return torch.multinomial(prob, min(1, prob.shape[0]), replacement=self.replace)
     
     def generate_block(self, insg, neighbor_nodes_idx, seed_nodes, P_sg, W_sg):
         """
