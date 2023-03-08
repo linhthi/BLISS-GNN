@@ -103,20 +103,25 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         return : the unnormalized probability of the candidate nodes, as well as the subgraph
                  containing all the edges from the candidate nodes to the output nodes.
         """
-        # 
+        # create new subgraph using the incoming edges of the given nodes
         insg = dgl.in_subgraph(g, seed_nodes)
+        # eliminate the isolated nodes across graph
         insg = dgl.compact_graphs(insg, seed_nodes)
         if self.importance_sampling:
+            # reverse the edges (top-down)
             out_frontier = dgl.reverse(insg, copy_edata=True)
+            # get the weights of the subgraph edges
             weight = weight[out_frontier.edata[dgl.EID].long()]
+            # prob for each node wil be the sum of square edge weights for each node
             prob = dgl.ops.copy_e_sum(out_frontier, weight ** 2)
+            # take the square root to follow the importance sampling equation
             prob = torch.sqrt(prob)
         else:
+            # prob for choosing any neighbor is 1
             prob = torch.ones(insg.num_nodes())
+            # set the non neighboring nodes to 0
             prob[insg.out_degrees() == 0] = 0
         return prob, insg
-
-    
 
     def select_neighbors(self, prob, num):
         """
@@ -225,7 +230,6 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         # print(r.shape)
 
         return r
-
     
     def sample_blocks(self, g, seed_nodes, exclude_eids=None, eta=0.1):
         output_nodes = seed_nodes
