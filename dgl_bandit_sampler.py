@@ -137,9 +137,12 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         # we need to find the corresponding local IDs of the resulting union in the subgraph
         # so that we can compute the edge weights of the block.
         # This is why we need a find_indices_in() function.
+        # sample K nodes given the node probabilities,
+        # where K is the passed num or the number of nodes in prob if num is larger than available nodes
         neighbor_nodes_idx = torch.multinomial(prob, min(num, prob.shape[0]), replacement=self.replace)
         return neighbor_nodes_idx
     
+    # # not used
     # def select_node(self, g, prob):
     #     """
     #     Select a node from the graph based on the given probability distribution.
