@@ -31,69 +31,15 @@ def union(*arrays):
 #         g.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
 #         return g.edata['w']
 
-def update_probability(prob, chosen_nodes, rewards, eta, k, n, T):
-    """
-    Update the probability of each node being selected using the rewards obtained
-    from the previous selection using exp3 algo.
-
-    Parameters
-    ----------
-    prob : numpy.ndarray
-        Unnormalized probability distribution of nodes in the current subgraph.
-    chosen_nodes : list
-        The index of the nodes that was selected in the previous iteration.
-    rewards : numpy.ndarray
-        The rewards obtained for each node in the previous iteration.
-    eta : float
-        Learning rate for updating the probability.
-    k : int
-        Number of nodes to select in each iteration.
-    n : int
-        Number of nodes in the current subgraph.
-    T : int
-        Total number of iterations.
-
-    Returns
-    -------
-    numpy.ndarray
-        Updated unnormalized probability distribution.
-    """
-    # Update the probability distribution for each node
-    # [?] the same as n, can we remove n?
-    num_chosen = len(chosen_nodes)
-    
-    # total_reward = rewards.sum()
-    # avg_reward = total_reward / num_chosen
-
-    # Calculate the delta value for exp3
-    delta = math.sqrt((1-eta)*eta**4*k**5*math.log(n/k)/(T*n**4))
-    # delta = 1
-
-    # Compute exponential weight for each chosen node
-    # [!] add `rewards_hat = rewards / prob`, default `prob = 1/N_i` , where N_i is all neighbors of i
-    # [?] should the equation be: `exp_weights = wij * torch.exp(delta * rewards_hat / n)`,
-    # [!] add new parameter `weights`, default `wij = 1`.
-    exp_weights = torch.exp(delta * rewards)
-
-
-    # Update probability for chosen nodes and normalize
-    for i in range(num_chosen):
-        node = chosen_nodes[i]
-        # [?] should the equation be: `prob[node] = (1 - eta) * (exp_weights[i] / sum(exp_weights)) + (eta / n)`
-        prob[node] = (1 - eta) * (eta * (exp_weights[i] / sum(exp_weights))) + eta / n
-
-    # # Normalize probability distribution
-    # prob /= prob.sum()
-    return prob
-
 class BanditSampler(dgl.dataloading.BlockSampler):
-    def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights', replace=False):
+    def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights', replace=False, eta=0.1):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
         self.importance_sampling = importance_sampling
         self.edge_weight = weight
         self.output_weight = out_weight
         self.replace = replace
+        self.eta = eta
     
     def compute_prob(self, g, seed_nodes, weight, num):
         """
@@ -142,6 +88,60 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         neighbor_nodes_idx = torch.multinomial(prob, min(num, prob.shape[0]), replacement=self.replace)
         return neighbor_nodes_idx
     
+    def update_probability(prob, chosen_nodes, rewards, eta, k, n, T):
+        """
+        Update the probability of each node being selected using the rewards obtained
+        from the previous selection using exp3 algo.
+
+        Parameters
+        ----------
+        prob : numpy.ndarray
+            Unnormalized probability distribution of nodes in the current subgraph.
+        chosen_nodes : list
+            The index of the nodes that was selected in the previous iteration.
+        rewards : numpy.ndarray
+            The rewards obtained for each node in the previous iteration.
+        eta : float
+            Learning rate for updating the probability.
+        k : int
+            Number of nodes to select in each iteration.
+        n : int
+            Number of nodes in the current subgraph.
+        T : int
+            Total number of iterations.
+
+        Returns
+        -------
+        numpy.ndarray
+            Updated unnormalized probability distribution.
+        """
+        # Update the probability distribution for each node
+        # [?] the same as n, can we remove n?
+        num_chosen = len(chosen_nodes)
+        
+        # total_reward = rewards.sum()
+        # avg_reward = total_reward / num_chosen
+
+        # Calculate the delta value for exp3
+        delta = math.sqrt((1-eta)*eta**4*k**5*math.log(n/k)/(T*n**4))
+        # delta = 1
+
+        # Compute exponential weight for each chosen node
+        # [!] add `rewards_hat = rewards / prob`, default `prob = 1/N_i` , where N_i is all neighbors of i
+        # [?] should the equation be: `exp_weights = wij * torch.exp(delta * rewards_hat / n)`,
+        # [!] add new parameter `weights`, default `wij = 1`.
+        exp_weights = torch.exp(delta * rewards)
+
+        # Update probability for chosen nodes and normalize
+        for i in range(num_chosen):
+            node = chosen_nodes[i]
+            # [?] should the equation be: `prob[node] = (1 - eta) * (exp_weights[i] / sum(exp_weights)) + (eta / n)`
+            prob[node] = (1 - eta) * (eta * (exp_weights[i] / sum(exp_weights))) + eta / n
+
+        # # Normalize probability distribution
+        # prob /= prob.sum()
+        return prob
+
     # # not used
     # def select_node(self, g, prob):
     #     """
@@ -200,7 +200,7 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         W = W_sg[sg.edata[dgl.EID].long()]
         # divide W over P
         W_tilde = dgl.ops.e_div_u(sg, W, P)
-        # sum of W_tilde per edge
+        # sum of W_tilde per node
         W_tilde_sum = dgl.ops.copy_e_sum(sg, W_tilde)
         # get nodes degrees
         d = sg.in_degrees()
@@ -257,7 +257,7 @@ class BanditSampler(dgl.dataloading.BlockSampler):
 
         return r
     
-    def sample_blocks(self, g, seed_nodes, exclude_eids=None, eta=0.1):
+    def sample_blocks(self, g, seed_nodes, exclude_eids=None):
         # copy seed_nodes to output_nodes (seed_nodes will be updated, output_nodes not)
         output_nodes = seed_nodes
         # convert seed_nodes IDs to tensor
@@ -286,7 +286,7 @@ class BanditSampler(dgl.dataloading.BlockSampler):
 
             # Apply bandit algorithm to choose the nodes
             # rewards = self.compute_rewards(insg, seed_nodes)
-            rewards = self.calculate_reward(insg, prob)
+            rewards = self.calculate_reward(insg, prob) # needs to be in separate class
             print("Rewards: ", rewards)
 
             # chosen_node = self.select_node(insg, prob)
@@ -299,7 +299,7 @@ class BanditSampler(dgl.dataloading.BlockSampler):
             # print chosen_nodes
             print("Choose node: ", chosen_nodes)
             # update nodes probabilities using EXP3 algorithm (given rewards)
-            prob = update_probability(prob, chosen_nodes, rewards, eta, num_nodes_to_sample, insg.num_nodes(), T=100)
+            prob = update_probability(prob, chosen_nodes, rewards, self.eta, num_nodes_to_sample, insg.num_nodes(), T=100)
             # print updated prob after using EXP3
             print("Updated prob: ", prob)
             # neighbor_nodes_idx = insg.successors(chosen_node).t()
