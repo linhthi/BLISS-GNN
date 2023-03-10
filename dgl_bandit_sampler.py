@@ -170,34 +170,56 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         W_sg : edge weights of @insg
         return : the block.
         """
+        # find indices of seed_nodes in the subgraph nodes
         seed_nodes_idx = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
+        # union of node idx from both seed_nodes and neighbor_nodes
         u_nodes = union(neighbor_nodes_idx, seed_nodes_idx)
+        # sample subgraph for the union nodes
         sg = insg.subgraph(u_nodes.type(insg.idtype))
+        # return source (u) and destination (v) nodes
         u, v = sg.edges()
+        # sources nodes (actual (original) indices)
         lu = sg.ndata[dgl.NID][u.long()]
+        # find matched indices of lu (source nodes) in neighbor_nodes
         s = find_indices_in(lu, neighbor_nodes_idx)
+        # sample subgraph using the given edges (or boolean mask of the available nodes)
         eg = dgl.edge_subgraph(sg, lu == neighbor_nodes_idx[s], relabel_nodes=False)
+        # update the node data with the original node data
         eg.ndata[dgl.NID] = sg.ndata[dgl.NID][:eg.num_nodes()]
+        # update the edge data with the original edge data
         eg.edata[dgl.EID] = sg.edata[dgl.EID][eg.edata[dgl.EID].long()]
+        # update the first subgraph with the updated edge subgraph
         sg = eg
+        # get the original node ids from insg
         nids = insg.ndata[dgl.NID][sg.ndata[dgl.NID].long()]
 
         # Normalize probability distribution
+        # get the probability for union nodes from P_sg which is unnormalized probability of the original subgraph.
         P = P_sg[u_nodes.long()]
+        # get the edge weight for the edges in the current subgraph from W_sg which is edge weight from the original subgraph.
         W = W_sg[sg.edata[dgl.EID].long()]
+        # divide W over P
         W_tilde = dgl.ops.e_div_u(sg, W, P)
+        # sum of W_tilde per edge
         W_tilde_sum = dgl.ops.copy_e_sum(sg, W_tilde)
+        # get nodes degrees
         d = sg.in_degrees()
+        # multiply W_tilde by d divided by W_tilde_sum
         W_tilde = dgl.ops.e_mul_v(sg, W_tilde, d / W_tilde_sum)
 
+        # Convert the graph into a block
         block = dgl.to_block(sg, seed_nodes_idx.type(sg.idtype))
+        # update the edge data with W_tilde
         block.edata[self.output_weight] = W_tilde
 
-        # correct node ID mapping
+        # correct node ID mapping for source nodes
         block.srcdata[dgl.NID] = nids[block.srcdata[dgl.NID].long()]
+        # correct node ID mapping for destination nodes
         block.dstdata[dgl.NID] = nids[block.dstdata[dgl.NID].long()]
-
+        
+        # get the original edge ids 
         sg_eids = insg.edata[dgl.EID][sg.edata[dgl.EID].long()]
+        # set the original edge ids to the block
         block.edata[dgl.EID] = sg_eids[block.edata[dgl.EID].long()]
         return block
 
