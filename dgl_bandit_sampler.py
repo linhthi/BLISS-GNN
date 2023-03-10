@@ -230,8 +230,9 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         q : the probability distribution over the nodes
         return : the reward for each node in the graph
         """
-
+        # k is number of nodes in the subgraph
         k = insg.num_nodes()
+        # get the device name
         device = q.device
 
         # calculate alpha_ij from Edge weights values of the batch graph, this weights can be different for each layer L
@@ -239,8 +240,8 @@ class BanditSampler(dgl.dataloading.BlockSampler):
 
         # calculate ||h_j(t)|| 
         # h_j should be embedding of each node at layer L
-        # Compute the L2 norm of node embeddings
         h_j = insg.ndata['nfeat'].to(device)
+        # Compute the L2 norm of node embeddings
         h_j_norm = torch.norm(h_j, dim=1, keepdim=True) 
         # print(h_j_norm.shape)
 
@@ -257,18 +258,30 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         return r
     
     def sample_blocks(self, g, seed_nodes, exclude_eids=None, eta=0.1):
+        # copy seed_nodes to output_nodes (seed_nodes will be updated, output_nodes not)
         output_nodes = seed_nodes
+        # convert seed_nodes IDs to tensor
         seed_nodes = torch.tensor(seed_nodes)
+        # empty list 
         blocks = []
+        # loop on the reverse of block IDs
         for block_id in reversed(range(len(self.nodes_per_layer))):
+            # get the number of sample from nodes_per_layer per each block
             num_nodes_to_sample = self.nodes_per_layer[block_id]
+            # get the edge weight from the original graph
             W = g.edata[self.edge_weight]
+            # run compute_prob to get the unnormalized prob and subgraph
             prob, insg = self.compute_prob(g, seed_nodes, W, num_nodes_to_sample)
+            # get cand_nodes IDs (all sampled nodes in the subgraph)
             cand_nodes = insg.ndata[dgl.NID]
+            # print candidate nodes IDs
             print("candidate nodes: ", cand_nodes)
             
+            # print the subgraph
             print("Insg: ", insg)
+            # print seed_nodes IDs
             print("Seed nodes: ", seed_nodes)
+            # print normalized prob
             print((prob/prob.sum()))
 
             # Apply bandit algorithm to choose the nodes
@@ -277,17 +290,25 @@ class BanditSampler(dgl.dataloading.BlockSampler):
             print("Rewards: ", rewards)
 
             # chosen_node = self.select_node(insg, prob)
+            # sample the best n neighbor nodes from given the probabilities of neighbors (and the current nodes)
             chosen_nodes = self.select_neighbors(prob, num_nodes_to_sample)
-            print(chosen_nodes)
+            
+            # copy chosen_nodes to neighbor_nodes_idx
+            # [?] can we remove this line?
             neighbor_nodes_idx = chosen_nodes
+            # print chosen_nodes
             print("Choose node: ", chosen_nodes)
+            # update nodes probabilities using EXP3 algorithm (given rewards)
             prob = update_probability(prob, chosen_nodes, rewards, eta, num_nodes_to_sample, insg.num_nodes(), T=100)
+            # print updated prob after using EXP3
             print("Updated prob: ", prob)
             # neighbor_nodes_idx = insg.successors(chosen_node).t()
             
-            block = self.generate_block(
-                insg, neighbor_nodes_idx.type(g.idtype), seed_nodes.type(g.idtype), prob,
-                W[insg.edata[dgl.EID].long()])
+            # generate block for the sampled nodes and the previous nodes
+            block = self.generate_block(insg, neighbor_nodes_idx.type(g.idtype), seed_nodes.type(g.idtype),
+                                        prob, W[insg.edata[dgl.EID].long()])
+            # update the seed_nodes with the sampled neighbors nodes to sample another block foe them in the next iteration
             seed_nodes = block.srcdata[dgl.NID]
+            # add blocks at the beginning of blocks list (top-down)
             blocks.insert(0, block)
         return seed_nodes, output_nodes, blocks
