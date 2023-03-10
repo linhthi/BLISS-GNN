@@ -299,7 +299,7 @@ class BanditSampler(dgl.dataloading.BlockSampler):
             # print chosen_nodes
             print("Choose node: ", chosen_nodes)
             # update nodes probabilities using EXP3 algorithm (given rewards)
-            prob = update_probability(prob, chosen_nodes, rewards, self.eta, num_nodes_to_sample, insg.num_nodes(), T=100)
+            prob = self.update_probability(prob, chosen_nodes, rewards, self.eta, num_nodes_to_sample, insg.num_nodes(), T=100)
             # print updated prob after using EXP3
             print("Updated prob: ", prob)
             # neighbor_nodes_idx = insg.successors(chosen_node).t()
