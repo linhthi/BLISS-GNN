@@ -88,7 +88,7 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         neighbor_nodes_idx = torch.multinomial(prob, min(num, prob.shape[0]), replacement=self.replace)
         return neighbor_nodes_idx
     
-    def update_probability(prob, chosen_nodes, rewards, eta, k, n, T):
+    def update_probability(self, insg, prob, chosen_nodes, rewards, weights, eta, k, n, T):
         """
         Update the probability of each node being selected using the rewards obtained
         from the previous selection using exp3 algo.
@@ -97,10 +97,14 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         ----------
         prob : numpy.ndarray
             Unnormalized probability distribution of nodes in the current subgraph.
+        insg:
+            Subgraph
         chosen_nodes : list
             The index of the nodes that was selected in the previous iteration.
         rewards : numpy.ndarray
             The rewards obtained for each node in the previous iteration.
+        weights:
+            The unnormalized edge weight.
         eta : float
             Learning rate for updating the probability.
         k : int
@@ -115,31 +119,20 @@ class BanditSampler(dgl.dataloading.BlockSampler):
         numpy.ndarray
             Updated unnormalized probability distribution.
         """
-        # Update the probability distribution for each node
-        # [?] the same as n, can we remove n?
-        num_chosen = len(chosen_nodes)
-        
-        # total_reward = rewards.sum()
-        # avg_reward = total_reward / num_chosen
-
         # Calculate the delta value for exp3
         delta = math.sqrt((1-eta)*eta**4*k**5*math.log(n/k)/(T*n**4))
-        # delta = 1
-
-        # Compute exponential weight for each chosen node
-        # [!] add `rewards_hat = rewards / prob`, default `prob = 1/N_i` , where N_i is all neighbors of i
-        # [?] should the equation be: `exp_weights = wij * torch.exp(delta * rewards_hat / n)`,
-        # [!] add new parameter `weights`, default `wij = 1`.
-        exp_weights = torch.exp(delta * rewards)
-
-        # Update probability for chosen nodes and normalize
-        for i in range(num_chosen):
-            node = chosen_nodes[i]
-            # [?] should the equation be: `prob[node] = (1 - eta) * (exp_weights[i] / sum(exp_weights)) + (eta / n)`
-            prob[node] = (1 - eta) * (eta * (exp_weights[i] / sum(exp_weights))) + eta / n
-
-        # # Normalize probability distribution
-        # prob /= prob.sum()
+        # Compute rewards_hat by dividing rewards by probabilities
+        rewards_hat = dgl.ops.e_div_u(insg, rewards, prob)
+        # print('rewards_hat', rewards_hat)
+        # Compute exponential weight for edges
+        exp_rewards = torch.exp(delta * rewards_hat / n)
+        # update weights
+        # [?] do we need to return the updated weight?
+        weights *= exp_rewards
+        # iterate over the chosen nodes and get the node and its index
+        for idx, node in enumerate(chosen_nodes):
+            # Update probability for chosen nodes and normalize
+            prob[node] = (1 - eta) * (weights[idx] / sum(weights)) + (eta / n)
         return prob
 
     # # not used
@@ -237,25 +230,22 @@ class BanditSampler(dgl.dataloading.BlockSampler):
 
         # calculate alpha_ij from Edge weights values of the batch graph, this weights can be different for each layer L
         alpha = torch.Tensor(insg.edata['w']).to(device) 
-
+        # print('alpha', alpha, alpha.shape)
         # calculate ||h_j(t)|| 
-        # h_j should be embedding of each node at layer L
+        # [!] h_j should be embedding of each node at layer L
         h_j = insg.ndata['nfeat'].to(device)
         # Compute the L2 norm of node embeddings
-        h_j_norm = torch.norm(h_j, dim=1, keepdim=True) 
-        # print(h_j_norm.shape)
+        h_j_norm = torch.norm(h_j, dim=1, keepdim=True)
 
         # calculate the reward
         # Because the edge weights are normalized, we don't need to divide by q_j
         # r = (alpha ** 2) / (k * (q_j ** 2)) * h_j_norm ** 2
         # r = dgl.ops.e_div_u(insg, (alpha ** 2), (k * (q ** 2)))
-        # print(r)
-        # print("R1: ", r.shape)
-        # Compute reward as element-wise product of edge weight and node L2 norm squared
-        r = dgl.ops.e_mul_v(insg, alpha ** 2, h_j_norm ** 2) 
-        # print(r.shape)
 
-        return r
+        # Compute reward as element-wise product of edge weight and node L2 norm squared
+        rewards = dgl.ops.e_mul_v(insg, alpha ** 2, h_j_norm ** 2)
+        rewards = torch.reshape(rewards, (-1,))
+        return rewards
     
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
         # copy seed_nodes to output_nodes (seed_nodes will be updated, output_nodes not)
@@ -281,15 +271,16 @@ class BanditSampler(dgl.dataloading.BlockSampler):
             print("Insg: ", insg)
             # print seed_nodes IDs
             print("Seed nodes: ", seed_nodes)
+            # print unnormalized prob
+            print('unnormalized prob', prob)
             # print normalized prob
-            print((prob/prob.sum()))
+            print('normalized prob', prob/prob.sum())
 
             # Apply bandit algorithm to choose the nodes
-            # rewards = self.compute_rewards(insg, seed_nodes)
-            rewards = self.calculate_reward(insg, prob) # needs to be in separate class
+            # [!] needs to be outside this function, it needs updated weights (after feed-forward)
+            rewards = self.calculate_reward(insg, prob)
             print("Rewards: ", rewards)
 
-            # chosen_node = self.select_node(insg, prob)
             # sample the best n neighbor nodes from given the probabilities of neighbors (and the current nodes)
             chosen_nodes = self.select_neighbors(prob, num_nodes_to_sample)
             
@@ -299,9 +290,10 @@ class BanditSampler(dgl.dataloading.BlockSampler):
             # print chosen_nodes
             print("Choose node: ", chosen_nodes)
             # update nodes probabilities using EXP3 algorithm (given rewards)
-            prob = self.update_probability(prob, chosen_nodes, rewards, self.eta, num_nodes_to_sample, insg.num_nodes(), T=100)
+            prob = self.update_probability(insg, prob, chosen_nodes, rewards, W, self.eta, num_nodes_to_sample, len(chosen_nodes), T=100)
             # print updated prob after using EXP3
-            print("Updated prob: ", prob)
+            print("Updated prob un norm: ", prob)
+            print("Updated prob norm: ", prob/prob.sum())
             # neighbor_nodes_idx = insg.successors(chosen_node).t()
             
             # generate block for the sampled nodes and the previous nodes
