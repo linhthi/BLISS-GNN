@@ -59,8 +59,8 @@ class SAGELightning(LightningModule):
         self.lr = lr
         # The usage of `train_acc` and `val_acc` is the recommended practice from now on as per
         # https://torchmetrics.readthedocs.io/en/latest/pages/lightning.html
-        self.train_acc = Accuracy()
-        self.val_acc = Accuracy()
+        self.train_acc = Accuracy(task='binary')
+        self.val_acc = Accuracy(task='binary')
         self.num_steps = 0
         self.cum_sampled_nodes = [0 for _ in range(n_layers + 1)]
         self.cum_sampled_edges = [0 for _ in range(n_layers)]
