@@ -115,9 +115,13 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
             W = g.edata[self.edge_weight]
             prob, insg = self.compute_prob(g, seed_nodes, W, num_nodes_to_sample)
             cand_nodes = insg.ndata[dgl.NID]
-            print(cand_nodes)
+            # print(cand_nodes)
             neighbor_nodes_idx = torch.tensor(self.select_neighbors(prob, num_nodes_to_sample))
-            print((prob/prob.sum()))
+            # print((prob/prob.sum()))
+            print('chosen_nodes', len(neighbor_nodes_idx))
+            print('seed_nodes', len(seed_nodes))
+            print('prob', prob.shape)
+            print('WWWWWWWWWW', W[insg.edata[dgl.EID].long()].shape)
             block = self.generate_block(
                 insg, neighbor_nodes_idx.type(g.idtype), seed_nodes.type(g.idtype), prob,
                 W[insg.edata[dgl.EID].long()])
