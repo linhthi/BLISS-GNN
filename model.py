@@ -37,7 +37,7 @@ class SAGE(nn.Module):
         h = x
         for l, (layer, block) in enumerate(zip(self.layers, blocks)):
             ## save the mag of (h) into block.srcdata
-            block.edata['embed'] = h
+            block.srcdata['embed'] = h
             h = layer(block, h, edge_weight=block.edata['edge_weights'] if 'edge_weights' in block.edata else None)
             if l != len(self.layers) - 1:
                 h = self.activation(h)
