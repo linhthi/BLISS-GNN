@@ -35,9 +35,10 @@ class SAGE(nn.Module):
 
     def forward(self, blocks, x):
         h = x
+        # print('embed', h, h.shape, h.dtype)
         for l, (layer, block) in enumerate(zip(self.layers, blocks)):
             ## save the mag of (h) into block.srcdata
-            block.srcdata['embed'] = h
+            block.srcdata['embed_norm'] = th.reshape(th.norm(h, dim=1, keepdim=True), (-1,))
             h = layer(block, h, edge_weight=block.edata['edge_weights'] if 'edge_weights' in block.edata else None)
             if l != len(self.layers) - 1:
                 h = self.activation(h)

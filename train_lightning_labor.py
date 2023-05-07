@@ -255,7 +255,14 @@ class BatchSizeCallback(Callback):
     def on_train_batch_end(self, trainer, datamodule, outputs, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
         self.push(mfgs[0].num_src_nodes())
+        print('mfgs[0].num_src_nodes()',  mfgs[0].num_src_nodes())
         # calculate update reward
+        print('mfgs node',  mfgs[0].srcdata)
+        print('mfgs node',  mfgs[0].dstdata)
+        print('mfgs edge',  mfgs[0].edata)
+        mfgs_with_reward = trainer.datamodule.sampler.calculate_rewards(mfgs)
+        trainer.datamodule.sampler.update_probabilities(mfgs_with_reward)
+        # print('mfgs[0].srcdata[embed_norm]',  mfgs[0].srcdata['embed_norm'].shape)
         # print(trainer.datamodule.sampler.updated_node_feat)
         # print('features', mfgs[0].srcdata['features'].shape)
         # print('features2', mfgs[0].dstdata['features'].shape)
