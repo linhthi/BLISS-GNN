@@ -128,4 +128,3 @@ lightning_logs/
 MNIST
 .DS_Store
 tb_logs/
-requirements_old.txt
