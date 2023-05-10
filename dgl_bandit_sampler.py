@@ -1,11 +1,7 @@
-from dgl.sampling import neighbor
 # source: https://github.com/dmlc/dgl/blob/d024c1547279d837350bd356df9b693d44bb49e2/examples/pytorch/labor/ladies_sampler.py#L25
 import dgl.function as fn
 import dgl
 import torch
-import numpy as np
-import torch.nn.functional as F
-import math
 
 def find_indices_in(a, b):
     # sort b in ascending order by value, and indices of the elements in the original input tensor.
@@ -126,8 +122,9 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
 
             q = mfg.srcdata[self.node_prob]
             # print('q', q, q.shape)
-            q = q + epsilon
-            # print('q2', q, q.shape)
+            
+            # q = q + epsilon
+            # print('q_epsilon', q, q.shape)
 
             rewards = dgl.ops.e_mul_u(mfg, alpha**2, (h_j_norm ** 2) / (k * (q ** 2))) # SDDMM 
             # print('updated rewards', rewards, rewards.shape)
@@ -158,29 +155,31 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             n = mfg.num_src_nodes()
             
             # Calculate the delta value for exp3
-            delta = math.sqrt((1-self.eta)*self.eta**4*k**5*math.log(n/k)/(self.T*n**4))
+            # delta = sqrt((1 - eta) * eta^4 * k^5 * ln(n/k) / (T*n^4))
+            # [!] multiply delta by (constant = 10) to speed up the training.
+            delta = torch.sqrt(torch.tensor([(1-self.eta)*self.eta**4*k**5*torch.log(torch.tensor([n/k]))/(self.T*n**4)])) * 10
             # delta = 0.4
-            print('delta', delta)
+            # print('delta', delta)
 
             # The rewards obtained for each node in the previous iteration
             rewards = mfg.edata['rewards']
-            print('rewards', rewards, rewards.shape)
+            # print('rewards', rewards, rewards.shape)
             
             # Unnormalized probability distribution of edges in the current subgraph.
             prob = self.exp3_prob[mfg.edata[dgl.EID].long()]
-            print('prob_', prob, prob.shape)
+            # print('prob_', prob, prob.shape)
 
             # Compute rewards_hat by dividing rewards by edge probabilities
             rewards_hat = rewards / prob
-            print('rewards_hat', rewards_hat)
+            # print('rewards_hat', rewards_hat)
         
             # Compute exponential weight for edges
             delta_reward = delta * rewards_hat / n # [!] revise n
-            print('delta_reward', delta_reward)
+            # print('delta_reward', delta_reward)
             delta_reward[delta_reward > 1] = 1
             
             exp_rewards = torch.exp(delta_reward)
-            print('exp_rewards', exp_rewards)
+            # print('exp_rewards', exp_rewards)
         
             # update weights
             self.exp3_weights[mfg.edata[dgl.EID].long()] *= exp_rewards
@@ -206,18 +205,18 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         
             # update weights
             exp_weights = self.exp3_weights[mfg.edata[dgl.EID].long()]
-            print('exp_weights', exp_weights)
+            # print('exp_weights', exp_weights)
 
             # sum of weights per node
             exp3_weights_sum = dgl.ops.copy_e_sum(mfg, exp_weights)
-            print('exp3_weights_sum', exp3_weights_sum)
+            # print('exp3_weights_sum', exp3_weights_sum)
         
             # get nodes degrees
             d = mfg.in_degrees()
 
             # multiply exp_weights by d divided by exp_weights_sum
             exp_weights_divided = dgl.ops.e_mul_v(mfg, exp_weights, d / exp3_weights_sum)
-            print('exp_weights_divided', exp_weights_divided)
+            # print('exp_weights_divided', exp_weights_divided)
   
             edge_prob = (1 - self.eta) * (exp_weights_divided) + (self.eta / n)
             self.exp3_prob[mfg.edata[dgl.EID].long()] = edge_prob
@@ -306,12 +305,15 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         for block_id in reversed(range(len(self.nodes_per_layer))):
             # get the number of sample from nodes_per_layer per each block
             num_nodes_to_sample = self.nodes_per_layer[block_id]
+            
             # get the edge weight from the original graph
             # W = g.edata[self.edge_weight]
+            
             # run compute_prob to get the unnormalized prob and subgraph
             prob, insg = self.compute_prob(g, seed_nodes, self.exp3_prob)
+            
             # get cand_nodes IDs (all sampled nodes in the subgraph)
-            cand_nodes = insg.ndata[dgl.NID]
+            # cand_nodes = insg.ndata[dgl.NID]
 
             # sample the best n neighbor nodes from given the probabilities of neighbors (and the current nodes)
             chosen_nodes = self.select_neighbors(prob, num_nodes_to_sample)
