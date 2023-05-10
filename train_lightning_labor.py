@@ -132,6 +132,7 @@ class DataModule(LightningDataModule):
         val_nid = th.nonzero(g.ndata['val_mask'], as_tuple=True)[0]
         test_nid = th.nonzero(~(g.ndata['train_mask'] | g.ndata['val_mask']), as_tuple=True)[0]
         
+        self.sampler_name = sampler
         self.num_epochs = num_epochs
         fanouts = [int(_) for _ in fan_out]
         if sampler == 'neighbor':
@@ -255,25 +256,14 @@ class BatchSizeCallback(Callback):
     def on_train_batch_end(self, trainer, datamodule, outputs, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
         self.push(mfgs[0].num_src_nodes())
-        # print('mfgs[0].num_src_nodes()',  mfgs[0].num_src_nodes())
-        
-        # print('mfgs node',  mfgs[0].srcdata)
-        # print('mfgs node',  mfgs[0].dstdata)
-        # print('mfgs edge',  mfgs[0].edata)
-        
-        # calculate update reward
-        mfgs_with_reward = trainer.datamodule.sampler.calculate_rewards(mfgs)
-        # update exp3 weights
-        trainer.datamodule.sampler.update_exp3_weights(mfgs_with_reward)
-        # update exp3 probabilities
-        trainer.datamodule.sampler.update_exp3_probabilities(mfgs_with_reward)
 
-        # print('mfgs[0].srcdata[embed_norm]',  mfgs[0].srcdata['embed_norm'].shape)
-        # print(trainer.datamodule.sampler.updated_node_feat)
-        # print('features', mfgs[0].srcdata['features'].shape)
-        # print('features2', mfgs[0].dstdata['features'].shape)
-        # trainer.datamodule.sampler.updated_node_feat = mfgs[0].srcdata['features']
-        # print("Training step is done.::::::::::::::::::")
+        if 'bandit' in trainer.datamodule.sampler_name:
+            # calculate update reward
+            mfgs_with_reward = trainer.datamodule.sampler.calculate_rewards(mfgs)
+            # update exp3 weights
+            trainer.datamodule.sampler.update_exp3_weights(mfgs_with_reward)
+            # update exp3 probabilities
+            trainer.datamodule.sampler.update_exp3_probabilities(mfgs_with_reward)
     
     def on_train_epoch_end(self, trainer, datamodule):
         if self.limit > 0 and self.n >= 2 and abs(self.limit - self.m) * self.n >= self.std * self.factor:
@@ -281,13 +271,6 @@ class BatchSizeCallback(Callback):
             trainer.reset_train_dataloader()
             trainer.reset_val_dataloader()
             self.clear()
-        # print("Training epoch is done.::::::::::::::::::")
-
-# class PrintCallback(Callback):
-#     def on_train_start(self, trainer, datamodule):
-#         print("Training is started!::::::::::::::")
-#     def on_train_end(self, trainer, datamodule):
-#         print("Training is done.::::::::::::::::::")
 
 def evaluate(model, g, nclasses, val_nid, device):
     """
