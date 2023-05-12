@@ -219,7 +219,9 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             # print('exp_weights_divided', exp_weights_divided)
   
             edge_prob = (1 - self.eta) * (exp_weights_divided) + (self.eta / n)
-            self.exp3_prob[mfg.edata[dgl.EID].long()] = edge_prob
+            
+            with torch.no_grad():
+                self.exp3_prob[mfg.edata[dgl.EID].clone().long()] = edge_prob
 
     def generate_block(self, insg, neighbor_nodes_idx, seed_nodes, P_sg, W_sg):
         """
