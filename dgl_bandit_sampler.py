@@ -29,7 +29,7 @@ def normalized_edata(g, weight=None):
 
 class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_epochs=1):
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
         self.importance_sampling = importance_sampling
@@ -39,7 +39,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         self.node_embedding = node_embedding
         self.replace = replace
         self.eta = eta
-        self.T = num_epochs
+        self.T = num_steps
         self.exp3_weights = None
         self.exp3_prob = None
     
@@ -156,8 +156,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             
             # Calculate the delta value for exp3
             # delta = sqrt((1 - eta) * eta^4 * k^5 * ln(n/k) / (T*n^4))
-            # [!] multiply delta by (constant = 10) to speed up the training.
-            delta = torch.sqrt(torch.tensor([(1-self.eta)*self.eta**4*k**5*torch.log(torch.tensor([n/k]))/(self.T*n**4)])) * 10
+            delta = torch.sqrt(torch.tensor([(1-self.eta)*self.eta**4*k**5*torch.log(torch.tensor([n/k]))/(self.T*n**4)]))
             # delta = 0.4
             # print('delta', delta)
 

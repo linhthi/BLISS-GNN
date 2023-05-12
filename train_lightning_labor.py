@@ -120,7 +120,7 @@ class SAGELightning(LightningModule):
 class DataModule(LightningDataModule):
     def __init__(self, dataset_name, data_cpu=False, graph_cpu=False, use_uva=False, fan_out=[10, 25],
                  device=th.device('cpu'), batch_size=1000, num_workers=4, sampler='labor',
-                 importance_sampling=0, layer_dependency=False, batch_dependency=1, cache_size=0, num_epochs=1):
+                 importance_sampling=0, layer_dependency=False, batch_dependency=1, cache_size=0, num_steps=5000):
         super().__init__()
 
         g, n_classes, multilabel = load_dataset(dataset_name)
@@ -133,13 +133,13 @@ class DataModule(LightningDataModule):
         test_nid = th.nonzero(~(g.ndata['train_mask'] | g.ndata['val_mask']), as_tuple=True)[0]
         
         self.sampler_name = sampler
-        self.num_epochs = num_epochs
+        self.num_steps = num_steps
         fanouts = [int(_) for _ in fan_out]
         if sampler == 'neighbor':
             sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts) #, prefetch_node_feats='features', prefetch_labels='labels')
         elif 'bandit' in sampler:
             g.edata['w'] = normalized_edata(g)
-            sampler = BanditSampler(fanouts, node_embedding='features', num_epochs=self.num_epochs)
+            sampler = BanditSampler(fanouts, node_embedding='features', num_steps=self.num_steps)
         elif 'ladies' in sampler:
             g.edata['w'] = normalized_edata(g)
             sampler = (PoissonLadiesSampler if 'poisson' in sampler else LadiesSampler)(fanouts)
@@ -337,7 +337,7 @@ if __name__ == '__main__':
         args.dataset, args.data_cpu, args.graph_cpu, args.use_uva,
         [int(_) for _ in args.fan_out.split(',')],
         device, args.batch_size, args.num_workers, args.sampler, args.importance_sampling,
-        args.layer_dependency, args.batch_dependency, args.cache_size, args.num_epochs)
+        args.layer_dependency, args.batch_dependency, args.cache_size, args.num_steps)
     model = SAGELightning(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
         F.relu, args.dropout, args.lr, datamodule.multilabel)
