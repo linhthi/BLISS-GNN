@@ -58,8 +58,8 @@ class SAGELightning(LightningModule):
         self.lr = lr
         # The usage of `train_acc` and `val_acc` is the recommended practice from now on as per
         # https://torchmetrics.readthedocs.io/en/latest/pages/lightning.html
-        self.train_acc = Accuracy(task="multiclass", num_classes = n_classes)
-        self.val_acc = Accuracy(task="multiclass", num_classes = n_classes)
+        self.train_acc = Accuracy()
+        self.val_acc = Accuracy()
         self.num_steps = 0
         self.cum_sampled_nodes = [0 for _ in range(n_layers + 1)]
         self.cum_sampled_edges = [0 for _ in range(n_layers)]
@@ -91,7 +91,6 @@ class SAGELightning(LightningModule):
         batch_inputs = mfgs[0].srcdata['features']
         batch_labels = mfgs[-1].dstdata['labels']
         batch_pred = self.module(mfgs, batch_inputs)
-        # print('module', batch_pred)
         loss = self.loss_fn(self.final_activation(batch_pred), batch_labels)
         self.train_acc(self.final_activation(batch_pred), batch_labels.int())
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_labels.shape[0])
@@ -131,7 +130,7 @@ class DataModule(LightningDataModule):
         train_nid = th.nonzero(g.ndata['train_mask'], as_tuple=True)[0]
         val_nid = th.nonzero(g.ndata['val_mask'], as_tuple=True)[0]
         test_nid = th.nonzero(~(g.ndata['train_mask'] | g.ndata['val_mask']), as_tuple=True)[0]
-        
+
         self.sampler_name = sampler
         self.num_steps = num_steps
         fanouts = [int(_) for _ in fan_out]
@@ -258,12 +257,8 @@ class BatchSizeCallback(Callback):
         self.push(mfgs[0].num_src_nodes())
 
         if 'bandit' in trainer.datamodule.sampler_name:
-            # calculate update reward
-            mfgs_with_reward = trainer.datamodule.sampler.calculate_rewards(mfgs)
-            # update exp3 weights
-            trainer.datamodule.sampler.update_exp3_weights(mfgs_with_reward)
-            # update exp3 probabilities
-            trainer.datamodule.sampler.update_exp3_probabilities(mfgs_with_reward)
+            # calculate reward, update exp3 weights and update exp3 probabilities
+            trainer.datamodule.sampler.exp3(mfgs)
     
     def on_train_epoch_end(self, trainer, datamodule):
         if self.limit > 0 and self.n >= 2 and abs(self.limit - self.m) * self.n >= self.std * self.factor:
@@ -271,8 +266,8 @@ class BatchSizeCallback(Callback):
             trainer.reset_train_dataloader()
             trainer.reset_val_dataloader()
             self.clear()
-
-def evaluate(model, g, nclasses, val_nid, device):
+    
+def evaluate(model, g, val_nid, device):
     """
     Evaluate the model on the validation set specified by ``val_nid``.
     g : The entire graph.
@@ -285,7 +280,7 @@ def evaluate(model, g, nclasses, val_nid, device):
     with th.no_grad():
         pred = model.module.inference(g, nfeat, device, args.batch_size, args.num_workers)
     model.train()
-    test_acc = Accuracy(task="multiclass", num_classes = nclasses)
+    test_acc = Accuracy()
     return test_acc(th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1), labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
 
 
@@ -345,9 +340,8 @@ if __name__ == '__main__':
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
     batchsize_callback = BatchSizeCallback(args.vertex_limit)
-    # print_callback = PrintCallback()
-    subdir = '{}_{}_{}_{}_{}'.format(args.dataset, args.sampler, args.importance_sampling,
-                                     args.layer_dependency, args.batch_dependency)
+    subdir = '{}_{}_{}_{}_{}_{}'.format(args.dataset, args.sampler, args.importance_sampling,
+                                     args.layer_dependency, args.batch_dependency, args.batch_size)
     logger = TensorBoardLogger(args.logdir, name=subdir)
     trainer = Trainer(gpus=[args.gpu] if args.gpu != -1 else None,
                       max_epochs=args.num_epochs,
@@ -366,5 +360,5 @@ if __name__ == '__main__':
 
     model = SAGELightning.load_from_checkpoint(
         checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
-    test_acc = evaluate(model, datamodule.g, datamodule.n_classes, datamodule.test_nid, device)
+    test_acc = evaluate(model, datamodule.g, datamodule.test_nid, device)
     print('Test accuracy:', test_acc)

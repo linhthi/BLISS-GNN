@@ -92,8 +92,8 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # where K is the passed num or the number of nodes in prob if num is larger than available nodes
         neighbor_nodes_idx = torch.multinomial(prob, min(num, prob.shape[0]), replacement=self.replace)
         return neighbor_nodes_idx
-    
-    def calculate_rewards(self, mfgs, epsilon=1e-5):
+
+    def calculate_rewards(self, idx, mfg, epsilon=1e-5):
         """
         Calculate the reward for each edge in the @mfgs.
 
@@ -107,32 +107,29 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         DGLBlock
             the mfgs after adding reward for each edge to each of mfgs 
         """
-        for idx, mfg in enumerate(mfgs):
-            # k is number of nodes in the subgraph
-            # [!] check (# chosen or total subgraph or actual subgraph)
-            k = self.nodes_per_layer[idx]
-            # print('k', k)
+        # k is number of nodes in the subgraph
+        # [!] check (# chosen or total subgraph or actual subgraph)
+        k = self.nodes_per_layer[idx]
+        # print('k', k)
 
-            alpha = mfg.edata[self.edge_weight]
-            # print('alpha', alpha, alpha.shape)
-            
-            # calculate ||h_j(t)|| 
-            h_j_norm = mfg.srcdata['embed_norm']
-            # print('h_j_norm', h_j_norm, h_j_norm.shape)
+        alpha = mfg.edata[self.edge_weight]
+        # print('alpha', alpha, alpha.shape)
+        
+        # calculate ||h_j(t)|| 
+        h_j_norm = mfg.srcdata['embed_norm']
+        # print('h_j_norm', h_j_norm, h_j_norm.shape)
 
-            q = mfg.srcdata[self.node_prob]
-            # print('q', q, q.shape)
-            
-            # q = q + epsilon
-            # print('q_epsilon', q, q.shape)
+        q = mfg.srcdata[self.node_prob]
+        # print('q', q, q.shape)
+        
+        # q = q + epsilon
+        # print('q_epsilon', q, q.shape)
 
-            rewards = dgl.ops.e_mul_u(mfg, alpha**2, (h_j_norm ** 2) / (k * (q ** 2))) # SDDMM 
-            # print('updated rewards', rewards, rewards.shape)
-            mfg.edata['rewards'] = rewards
-        # print('mfgssssss rewards', mfgs[0].edata)
-        return mfgs
+        rewards = dgl.ops.e_mul_u(mfg, alpha**2, (h_j_norm ** 2) / (k * (q ** 2))) # SDDMM 
+        # print('updated rewards', rewards, rewards.shape)
+        mfg.edata['rewards'] = rewards
     
-    def update_exp3_weights(self, mfgs):
+    def update_exp3_weights(self, idx, mfg):
         """
         Update the exp3 weights of each edge being selected using the rewards obtained
         from the previous selection using exp3 algo.
@@ -148,43 +145,42 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # T = self.T, Total number of iterations.
         # eta = self.eta, Learning rate for updating the probability.
 
-        for idx, mfg in enumerate(mfgs):
-            # Number of nodes to select in each iteration.
-            k = self.nodes_per_layer[idx]
-            # Number of nodes in the current subgraph.
-            n = mfg.num_src_nodes()
-            
-            # Calculate the delta value for exp3
-            # delta = sqrt((1 - eta) * eta^4 * k^5 * ln(n/k) / (T*n^4))
-            delta = torch.sqrt(torch.tensor([(1-self.eta)*self.eta**4*k**5*torch.log(torch.tensor([n/k]))/(self.T*n**4)]))
-            # delta = 0.4
-            # print('delta', delta)
-
-            # The rewards obtained for each node in the previous iteration
-            rewards = mfg.edata['rewards']
-            # print('rewards', rewards, rewards.shape)
-            
-            # Unnormalized probability distribution of edges in the current subgraph.
-            prob = self.exp3_prob[mfg.edata[dgl.EID].long()]
-            # print('prob_', prob, prob.shape)
-
-            # Compute rewards_hat by dividing rewards by edge probabilities
-            rewards_hat = rewards / prob
-            # print('rewards_hat', rewards_hat)
+        # Number of nodes to select in each iteration.
+        k = self.nodes_per_layer[idx]
+        # Number of nodes in the current subgraph.
+        n = mfg.num_src_nodes()
         
-            # Compute exponential weight for edges
-            delta_reward = delta * rewards_hat / n # [!] revise n
-            # print('delta_reward', delta_reward)
-            delta_reward[delta_reward > 1] = 1
-            
-            exp_rewards = torch.exp(delta_reward)
-            # print('exp_rewards', exp_rewards)
-        
-            # update weights
-            self.exp3_weights[mfg.edata[dgl.EID].long()] *= exp_rewards
-            # print('exp_weights', exp_weights)
+        # Calculate the delta value for exp3
+        # delta = sqrt((1 - eta) * eta^4 * k^5 * ln(n/k) / (T*n^4))
+        delta = torch.sqrt(torch.tensor([(1-self.eta)*self.eta**4*k**5*torch.log(torch.tensor([n/k]))/(self.T*n**4)]))
+        # delta = 0.4
+        # print('delta', delta)
 
-    def update_exp3_probabilities(self, mfgs):
+        # The rewards obtained for each node in the previous iteration
+        rewards = mfg.edata['rewards']
+        # print('rewards', rewards, rewards.shape)
+        
+        # Unnormalized probability distribution of edges in the current subgraph.
+        prob = self.exp3_prob[mfg.edata[dgl.EID].long()]
+        # print('prob_', prob, prob.shape)
+
+        # Compute rewards_hat by dividing rewards by edge probabilities
+        rewards_hat = rewards / prob
+        # print('rewards_hat', rewards_hat)
+    
+        # Compute exponential weight for edges
+        delta_reward = delta * rewards_hat / n # [!] revise n
+        # print('delta_reward', delta_reward)
+        delta_reward[delta_reward > 1] = 1
+        
+        exp_rewards = torch.exp(delta_reward)
+        # print('exp_rewards', exp_rewards)
+    
+        # update weights
+        self.exp3_weights[mfg.edata[dgl.EID].long()] *= exp_rewards
+        # print('exp_weights', exp_weights)
+
+    def update_exp3_probabilities(self, idx, mfg):
         """
         Update the exp3 probability of each edge being selected using the updated exp3 weights using exp3 algo.
 
@@ -198,29 +194,38 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         """
         # eta = self.eta, Learning rate for updating the probability.
 
+        # Number of nodes in the current subgraph.
+        n = mfg.num_src_nodes()
+    
+        # update weights
+        exp_weights = self.exp3_weights[mfg.edata[dgl.EID].long()]
+        # print('exp_weights', exp_weights)
+
+        # sum of weights per node
+        exp3_weights_sum = dgl.ops.copy_e_sum(mfg, exp_weights)
+        # print('exp3_weights_sum', exp3_weights_sum)
+    
+        # get nodes degrees
+        d = mfg.in_degrees()
+
+        # multiply exp_weights by d divided by exp_weights_sum
+        exp_weights_divided = dgl.ops.e_mul_v(mfg, exp_weights, d / exp3_weights_sum)
+        # print('exp_weights_divided', exp_weights_divided)
+
+        edge_prob = (1 - self.eta) * (exp_weights_divided) + (self.eta / n)
+        
+        with torch.no_grad():
+            self.exp3_prob[mfg.edata[dgl.EID].clone().long()] = edge_prob
+
+    def exp3(self, mfgs):
+        # loop over all blocks (layers)
         for idx, mfg in enumerate(mfgs):
-            # Number of nodes in the current subgraph.
-            n = mfg.num_src_nodes()
-        
-            # update weights
-            exp_weights = self.exp3_weights[mfg.edata[dgl.EID].long()]
-            # print('exp_weights', exp_weights)
-
-            # sum of weights per node
-            exp3_weights_sum = dgl.ops.copy_e_sum(mfg, exp_weights)
-            # print('exp3_weights_sum', exp3_weights_sum)
-        
-            # get nodes degrees
-            d = mfg.in_degrees()
-
-            # multiply exp_weights by d divided by exp_weights_sum
-            exp_weights_divided = dgl.ops.e_mul_v(mfg, exp_weights, d / exp3_weights_sum)
-            # print('exp_weights_divided', exp_weights_divided)
-  
-            edge_prob = (1 - self.eta) * (exp_weights_divided) + (self.eta / n)
-            
-            with torch.no_grad():
-                self.exp3_prob[mfg.edata[dgl.EID].clone().long()] = edge_prob
+            # calculate rewards
+            self.calculate_rewards(idx, mfg)
+            # update exp3 weights
+            self.update_exp3_weights(idx, mfg)
+            # update exp3 probabilities
+            self.update_exp3_probabilities(idx, mfg)
 
     def generate_block(self, insg, neighbor_nodes_idx, seed_nodes, P_sg, W_sg):
         """
