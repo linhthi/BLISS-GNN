@@ -195,9 +195,6 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         None
         """
         # eta = self.eta, Learning rate for updating the probability.
-
-        # Number of nodes in the current subgraph.
-        n = mfg.num_src_nodes()
     
         # update weights
         exp_weights = self.exp3_weights[idx]#[mfg.edata[dgl.EID].long()]
@@ -209,19 +206,26 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
     
         # # get nodes degrees
         n = g.in_degrees()  # n (degree) is from the original graph
+        # # get the updated nodes degree only
+        # n = n[mfg.srcdata[dgl.NID].long()]
         # print('n', n, n.shape)
         
-        # multiply exp_weights by d divided by exp_weights_sum
+        # divide exp_weights over exp_weights_sum
         exp_weights_divided = dgl.ops.e_div_v(g, exp_weights, exp3_weights_sum)
         # print('exp_weights_divided', exp_weights_divided, exp_weights_divided.shape)
 
+        # # get the updated weights only
+        # exp_weights_divided = exp_weights_divided[mfg.edata[dgl.EID].long()]
+
+        # update edge prob
         edge_prob = dgl.ops.u_add_e(g, (self.eta / n), (1 - self.eta) * (exp_weights_divided))
 
         # edge_prob = (1 - self.eta) * (exp_weights_divided) + (self.eta / n)
         # print('edge_prob', edge_prob, edge_prob.shape)
         
+        # update only the updated edges
         with torch.no_grad():
-            self.exp3_prob[idx] = edge_prob #[mfg.edata[dgl.EID].clone().long()] = edge_prob
+            self.exp3_prob[idx][mfg.edata[dgl.EID].clone().long()] = edge_prob[mfg.edata[dgl.EID].clone().long()]
 
     def exp3(self, mfgs, g):
         # loop over all blocks (layers)
