@@ -147,7 +147,8 @@ class DataModule(LightningDataModule):
         self.num_steps = num_steps
         fanouts = [int(_) for _ in fan_out]
         if sampler == 'neighbor':
-            sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts) #, prefetch_node_feats='features', prefetch_labels='labels')
+            sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
+            #, prefetch_node_feats='features', prefetch_labels='labels')
         elif 'bandit' in sampler:
             g.edata['w'] = normalized_edata(g)
             sampler = BanditSampler(fanouts, node_embedding='features', num_steps=self.num_steps)
@@ -271,7 +272,7 @@ class BatchSizeCallback(Callback):
 
         if 'bandit' in trainer.datamodule.sampler_name:
             # calculate reward, update exp3 weights and update exp3 probabilities
-            trainer.datamodule.sampler.exp3(mfgs)
+            trainer.datamodule.sampler.exp3(mfgs, trainer.datamodule.g)
     
     def on_train_epoch_end(self, trainer, datamodule):
         if self.limit > 0 and self.n >= 2 and abs(self.limit - self.m) * self.n >= self.std * self.factor:
