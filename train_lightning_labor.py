@@ -33,7 +33,7 @@ import itertools
 
 from load_graph import load_dataset, inductive_split
 
-from torchmetrics import Accuracy
+from torchmetrics import Accuracy, F1Score
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -58,8 +58,16 @@ class SAGELightning(LightningModule):
         self.lr = lr
         # The usage of `train_acc` and `val_acc` is the recommended practice from now on as per
         # https://torchmetrics.readthedocs.io/en/latest/pages/lightning.html
-        self.train_acc = Accuracy(task="multiclass", num_classes = n_classes)
-        self.val_acc = Accuracy(task="multiclass", num_classes = n_classes)
+        if multilabel:
+            self.train_acc = Accuracy(task="multilabel", num_labels=n_classes)
+            self.val_acc = Accuracy(task="multilabel", num_labels=n_classes)
+            self.train_f1 = F1Score(task="multilabel", num_labels=n_classes)
+            self.val_f1 = F1Score(task="multilabel", num_labels=n_classes)
+        else:
+            self.train_acc = Accuracy(task="multiclass", num_classes = n_classes)
+            self.val_acc = Accuracy(task="multiclass", num_classes = n_classes)
+            self.train_f1 = F1Score(task="multiclass", num_classes = n_classes)
+            self.val_f1 = F1Score(task="multiclass", num_classes = n_classes)
         self.num_steps = 0
         self.cum_sampled_nodes = [0 for _ in range(n_layers + 1)]
         self.cum_sampled_edges = [0 for _ in range(n_layers)]
@@ -91,10 +99,11 @@ class SAGELightning(LightningModule):
         batch_inputs = mfgs[0].srcdata['features']
         batch_labels = mfgs[-1].dstdata['labels']
         batch_pred = self.module(mfgs, batch_inputs)
-        # print('module', batch_pred)
         loss = self.loss_fn(self.final_activation(batch_pred), batch_labels)
         self.train_acc(self.final_activation(batch_pred), batch_labels.int())
+        self.train_f1(self.final_activation(batch_pred), batch_labels.int())
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_labels.shape[0])
+        self.log('train_f1', self.train_f1, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_labels.shape[0])
         self.log('train_loss', loss, on_step=True, on_epoch=True, batch_size=batch_labels.shape[0])
         t = time.time()
         self.log('iter_time', t - self.pt, prog_bar=True, on_step=True, on_epoch=False)
@@ -109,7 +118,9 @@ class SAGELightning(LightningModule):
         batch_pred = self.module(mfgs, batch_inputs)
         loss = self.loss_fn(self.final_activation(batch_pred), batch_labels)
         self.val_acc(self.final_activation(batch_pred), batch_labels.int())
+        self.val_f1(self.final_activation(batch_pred), batch_labels.int())
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True, batch_size=batch_labels.shape[0])
+        self.log('val_f1', self.val_f1, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True, batch_size=batch_labels.shape[0])
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=batch_labels.shape[0])
 
     def configure_optimizers(self):
@@ -120,7 +131,7 @@ class SAGELightning(LightningModule):
 class DataModule(LightningDataModule):
     def __init__(self, dataset_name, data_cpu=False, graph_cpu=False, use_uva=False, fan_out=[10, 25],
                  device=th.device('cpu'), batch_size=1000, num_workers=4, sampler='labor',
-                 importance_sampling=0, layer_dependency=False, batch_dependency=1, cache_size=0, num_epochs=1):
+                 importance_sampling=0, layer_dependency=False, batch_dependency=1, cache_size=0, num_steps=5000):
         super().__init__()
 
         g, n_classes, multilabel = load_dataset(dataset_name)
@@ -131,19 +142,22 @@ class DataModule(LightningDataModule):
         train_nid = th.nonzero(g.ndata['train_mask'], as_tuple=True)[0]
         val_nid = th.nonzero(g.ndata['val_mask'], as_tuple=True)[0]
         test_nid = th.nonzero(~(g.ndata['train_mask'] | g.ndata['val_mask']), as_tuple=True)[0]
-        
-        self.num_epochs = num_epochs
+
+        self.sampler_name = sampler
+        self.num_steps = num_steps
         fanouts = [int(_) for _ in fan_out]
         if sampler == 'neighbor':
-            sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts) #, prefetch_node_feats='features', prefetch_labels='labels')
+            sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
+            #, prefetch_node_feats='features', prefetch_labels='labels')
         elif 'bandit' in sampler:
             g.edata['w'] = normalized_edata(g)
-            sampler = BanditSampler(fanouts, node_embedding='features', num_epochs=self.num_epochs)
+            sampler = BanditSampler(fanouts, node_embedding='features', num_steps=self.num_steps)
         elif 'ladies' in sampler:
             g.edata['w'] = normalized_edata(g)
             sampler = (PoissonLadiesSampler if 'poisson' in sampler else LadiesSampler)(fanouts)
         else:
-            sampler = dgl.dataloading.LaborSampler(fanouts, importance_sampling=importance_sampling, layer_dependency=layer_dependency, batch_dependency=batch_dependency) #, prefetch_node_feats='features', prefetch_edge_feats='edge_weights', prefetch_labels='labels')
+            sampler = dgl.dataloading.LaborSampler(fanouts, importance_sampling=importance_sampling,
+                                                   layer_dependency=layer_dependency)#, batch_dependency=batch_dependency) #, prefetch_node_feats='features', prefetch_edge_feats='edge_weights', prefetch_labels='labels')
 
         dataloader_device = th.device('cpu')
         if use_uva or (not data_cpu and not graph_cpu):
@@ -255,12 +269,10 @@ class BatchSizeCallback(Callback):
     def on_train_batch_end(self, trainer, datamodule, outputs, batch, batch_idx):
         input_nodes, output_nodes, mfgs = batch
         self.push(mfgs[0].num_src_nodes())
-        # calculate update reward
-        # print(trainer.datamodule.sampler.updated_node_feat)
-        # print('features', mfgs[0].srcdata['features'].shape)
-        # print('features2', mfgs[0].dstdata['features'].shape)
-        # trainer.datamodule.sampler.updated_node_feat = mfgs[0].srcdata['features']
-        print("Training step is done.::::::::::::::::::")
+
+        if 'bandit' in trainer.datamodule.sampler_name:
+            # calculate reward, update exp3 weights and update exp3 probabilities
+            trainer.datamodule.sampler.exp3(mfgs, trainer.datamodule.g)
     
     def on_train_epoch_end(self, trainer, datamodule):
         if self.limit > 0 and self.n >= 2 and abs(self.limit - self.m) * self.n >= self.std * self.factor:
@@ -268,15 +280,8 @@ class BatchSizeCallback(Callback):
             trainer.reset_train_dataloader()
             trainer.reset_val_dataloader()
             self.clear()
-        print("Training epoch is done.::::::::::::::::::")
-
-# class PrintCallback(Callback):
-#     def on_train_start(self, trainer, datamodule):
-#         print("Training is started!::::::::::::::")
-#     def on_train_end(self, trainer, datamodule):
-#         print("Training is done.::::::::::::::::::")
-
-def evaluate(model, g, nclasses, val_nid, device):
+    
+def evaluate(model, g, n_classes, multilabel, val_nid, device):
     """
     Evaluate the model on the validation set specified by ``val_nid``.
     g : The entire graph.
@@ -289,8 +294,19 @@ def evaluate(model, g, nclasses, val_nid, device):
     with th.no_grad():
         pred = model.module.inference(g, nfeat, device, args.batch_size, args.num_workers)
     model.train()
-    test_acc = Accuracy(task="multiclass", num_classes = nclasses)
-    return test_acc(th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1), labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    if multilabel:
+        test_acc = Accuracy(task="multilabel", num_labels=n_classes)
+        test_f1 = F1Score(task="multilabel", num_labels=n_classes)
+    else:
+        test_acc = Accuracy(task="multiclass", num_classes = n_classes)
+        test_f1 = F1Score(task="multiclass", num_classes = n_classes)
+    
+    acc = test_acc(th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1),
+                   labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    
+    f1 = test_f1(th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1),
+                   labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    return acc, f1
 
 
 if __name__ == '__main__':
@@ -341,7 +357,7 @@ if __name__ == '__main__':
         args.dataset, args.data_cpu, args.graph_cpu, args.use_uva,
         [int(_) for _ in args.fan_out.split(',')],
         device, args.batch_size, args.num_workers, args.sampler, args.importance_sampling,
-        args.layer_dependency, args.batch_dependency, args.cache_size, args.num_epochs)
+        args.layer_dependency, args.batch_dependency, args.cache_size, args.num_steps)
     model = SAGELightning(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
         F.relu, args.dropout, args.lr, datamodule.multilabel)
@@ -349,9 +365,8 @@ if __name__ == '__main__':
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
     batchsize_callback = BatchSizeCallback(args.vertex_limit)
-    # print_callback = PrintCallback()
-    subdir = '{}_{}_{}_{}_{}'.format(args.dataset, args.sampler, args.importance_sampling,
-                                     args.layer_dependency, args.batch_dependency)
+    subdir = '{}_{}_{}_{}_{}_{}'.format(args.dataset, args.sampler, args.importance_sampling,
+                                     args.layer_dependency, args.batch_dependency, args.batch_size)
     logger = TensorBoardLogger(args.logdir, name=subdir)
     trainer = Trainer(gpus=[args.gpu] if args.gpu != -1 else None,
                       max_epochs=args.num_epochs,
@@ -370,5 +385,6 @@ if __name__ == '__main__':
 
     model = SAGELightning.load_from_checkpoint(
         checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
-    test_acc = evaluate(model, datamodule.g, datamodule.n_classes, datamodule.test_nid, device)
-    print('Test accuracy:', test_acc)
+    test_acc, test_f1 = evaluate(model, datamodule.g, datamodule.n_classes, datamodule.multilabel, datamodule.test_nid, device)
+    print('Test Accuracy:', test_acc)
+    print('Test F1:', test_f1)
