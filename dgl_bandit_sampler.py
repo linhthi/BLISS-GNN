@@ -44,11 +44,14 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
     
     def compute_prob(self, g, seed_nodes, weight):
         """
-        g : the whole graph
-        seed_nodes : the output nodes for the current layer
-        weight : the weight of the edges
-        return : the unnormalized probability of the candidate nodes, as well as the subgraph
-                 containing all the edges from the candidate nodes to the output nodes.
+        Args:
+            g (DGLGraph): the whole graph
+            seed_nodes (Tensor): the output nodes for the current layer
+            weight (Tensor): the weight of the edges
+        
+        Returns:
+            Tensor: the unnormalized probability of the candidate nodes
+            DGLBlock: subgraph containing all the edges from the candidate nodes to the output nodes.
         """
         # create new subgraph using the incoming edges of the given nodes
         insg = dgl.in_subgraph(g, seed_nodes)
@@ -76,10 +79,13 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
 
     def select_neighbors(self, prob, num):
         """
-        prob : unnormalized probability of each candidate node
-        num : number of neighbors to sample
-        return : the set of input nodes in terms of their indices in @cand_nodes, and also the indices of
-                 seed nodes in the selected nodes.
+        Args:
+            prob (Tensor): unnormalized probability of each candidate node
+            num (int): number of neighbors to sample
+        
+        Returns:
+            Tensor: the set of input nodes in terms of their indices in @cand_nodes, and also the indices of
+                    seed nodes in the selected nodes.
         """
         # The returned nodes should be a union of seed_nodes plus @num nodes from cand_nodes.
         # Because compute_prob returns a compacted subgraph and a list of probabilities,
@@ -96,34 +102,24 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         """
         Calculate the reward for each edge in the @mfgs.
 
-        Parameters
-        ----------
-        - mfgs : the blocks (in top-down format) to compute rewards for
-        - epsilon: add small value to the prob to avoid dividing by zero
-        
-        Returns
-        -------
-        DGLBlock
-            the mfgs after adding reward for each edge to each of mfgs 
+        Args:
+            mfgs (DGLBlock): the blocks (in top-down format) to compute rewards for
+            epsilon (float): add small value to the prob to avoid dividing by zero
+
+        Returns:
+            DGLBlock: the mfgs after adding reward for each edge to each of mfgs 
         """
-        # k is number of nodes in the subgraph (sample size)
-        # [!] check (# chosen or total subgraph or actual subgraph)
+        # k is number of nodes in the subgraph (sample size or number of arms)
         k = self.nodes_per_layer[idx]
-        # print('k', k)
-
+        # alpha
         alpha = mfg.edata[self.edge_weight]
-        # print('alpha', alpha, alpha.shape)
-        
-        # calculate ||h_j(t)|| 
+        # calculate ||h_j(t)|| (node embedding norm)
         h_j_norm = mfg.srcdata['embed_norm']
-        # print('h_j_norm', h_j_norm, h_j_norm.shape)
-
+        # node prob
         q = mfg.srcdata[self.node_prob]
-        # print('q', q, q.shape)
-
+        # calculate rewards (alpha**2 * ||h_j(t)||**2) / (k * q**2)
         rewards = dgl.ops.e_mul_u(mfg, alpha**2, (h_j_norm ** 2) / (k * (q ** 2)))
-
-        # print('updated rewards', rewards, rewards.shape)
+        # store rewrds inside the block data
         mfg.edata['rewards'] = rewards
     
     def update_exp3_weights(self, idx, mfg, g):
@@ -131,91 +127,74 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         Update the exp3 weights of each edge being selected using the rewards obtained
         from the previous selection using exp3 algo.
 
-        Parameters
-        ----------
-        - mfgs : the blocks (in top-down format) to compute exp3 edge weight for
-
-        Returns
-        -------
-        None
+        Args:
+            mfgs (DGLBlock): the blocks (in top-down format) to compute exp3 edge weight for
         """
         # T = self.T, Total number of iterations.
         # eta = self.eta, Learning rate for updating the probability.
-
-        # Number of nodes to select in each iteration (sample size).
+        # Number of nodes to select in each iteration (sample size or number of arms).
         k = self.nodes_per_layer[idx]
-        
         # Number of nodes in the current subgraph (neigbor of a node or degree)
         n = g.in_degrees()[mfg.srcdata[dgl.NID].long()]
-        # print('n', n)
-        
         # Calculate the delta value for exp3
-        # delta = sqrt((1 - eta) * eta^4 * k^5 * ln(n/k) / (T*n^4))
+        # delta: sqrt((1 - eta) * eta^4 * k^5 * ln(n/k) / (T*n^4))
         # delta = torch.sqrt((1 - self.eta) * self.eta**4 * k**5 * torch.log(n/k) / (self.T * n**4))
-        # delta = torch.nan_to_num(delta)
         delta = 1/n**2
-        # print('delta', delta)
-
         # The rewards obtained for each node in the previous iteration
         rewards = mfg.edata['rewards'].clone().detach()
-        # print('rewards', rewards, rewards.shape)
-        
         # Unnormalized probability distribution of edges in the current subgraph.
         prob = mfg.edata['q_ij'].clone().detach()
-        # print('prob_', prob, prob.shape)
-
         # Compute rewards_hat by dividing rewards by edge probabilities
         rewards_hat = rewards / prob
-        # print('rewards_hat', rewards_hat)
-    
         # Compute exponential weight for edges
         delta_reward = dgl.ops.e_mul_u(mfg, rewards_hat, delta / n)
-        # print('delta_reward', delta_reward)
+        # limit delta_reward to 1
         delta_reward[delta_reward > 1] = 1
-        
+        # take exp of delta_reward
         exp_rewards = torch.exp(delta_reward)
-        # print('exp_rewards', exp_rewards)
-    
         # update weights
         self.exp3_weights[idx][mfg.edata[dgl.EID].long()] *= exp_rewards
-        # print('exp_weights', self.exp3_weights[idx][mfg.edata[dgl.EID].long()])
 
     def exp3_probabilities(self, idx, g, seed_nodes):
         """
         Update the exp3 probability of each edge being selected using the updated exp3 weights using exp3 algo.
 
-        Parameters
-        ----------
-        - g: the original graph
+        Args:
+            idx (int): block index
+            g (DGLGraph): the original graph
+            seed_nodes (Tensor): node ids to calculate edge prob for
 
-        Returns
-        -------
-        edge_prob: the prob of each edge
+        Returns:
+            Tensor: the normalized prob of each edge (edge_prob)
         """
+
         # eta = self.eta, Learning rate for updating the probability.
         edges_ids = g.in_edges(seed_nodes, form='eid')
-
         # update weights
         exp_weights = self.exp3_weights[idx] #[mfg.edata[dgl.EID].long()]
-        # print('exp_weights', exp_weights, exp_weights.shape)
-
         # sum of weights per node
         exp3_weights_sum = dgl.ops.copy_e_sum(g, exp_weights)
-        # print('exp3_weights_sum', exp3_weights_sum, exp3_weights_sum.shape)
-        
         # divide exp_weights over exp_weights_sum
         exp_weights_divided = dgl.ops.e_div_u(g, exp_weights, exp3_weights_sum)
-        # print('exp_weights_divided', exp_weights_divided, exp_weights_divided.shape)
-
         # number of weights
         k = g.in_degrees()
-
         # update edge prob
         edge_prob = dgl.ops.u_add_e(g, (self.eta / k), (1 - self.eta) * (exp_weights_divided))
+        
+        # # sum of weights per node
+        # edge_prob_sum = dgl.ops.copy_e_sum(g, edge_prob)
+        # # divide edge_prob over edge_prob_sum
+        # edge_prob_divided = dgl.ops.e_div_u(g, edge_prob, edge_prob_sum)
 
         return edge_prob[edges_ids.long()]
     
     def exp3(self, mfgs, g):
+        """_summary_
+
+        Args:
+            mfgs (DGLBlock): _description_
+            g (DGLGraph): _description_
+        """        
         # loop over all blocks (layers)
         for idx, mfg in enumerate(mfgs):
             # calculate rewards
@@ -225,13 +204,16 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
 
     def generate_block(self, insg, neighbor_nodes_idx, seed_nodes, P_sg, W_sg):
         """
-        insg : the subgraph yielded by compute_prob()
-        neighbor_nodes_idx : the sampled nodes from the subgraph @insg, yielded by select_neighbors()
-        seed_nodes_local_idx : the indices of seed nodes in the selected neighbor nodes, also yielded
-                               by select_neighbors()
-        P_sg : unnormalized probability of each node being sampled, yielded by compute_prob()
-        W_sg : edge weights of @insg
-        return : the block.
+        Args:
+            insg : the subgraph yielded by compute_prob()
+            neighbor_nodes_idx (Tensor): the sampled nodes from the subgraph @insg, yielded by select_neighbors()
+            seed_nodes_local_idx (Tensor): the indices of seed nodes in the selected neighbor nodes, also yielded
+                                           by select_neighbors()
+            P_sg (Tensor): unnormalized probability of each node being sampled, yielded by compute_prob()
+            W_sg (Tensor): edge weights of @insg
+        
+        Returns:
+            DGLBlock: the block.
         """
         # find indices of seed_nodes in the subgraph nodes
         seed_nodes_idx = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
@@ -244,7 +226,8 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # sources nodes (actual (original) indices)
         lu = sg.ndata[dgl.NID][u.long()]
         # find matched indices of lu (source nodes) in neighbor_nodes
-        s = find_indices_in(lu, neighbor_nodes_idx)        
+        s = find_indices_in(lu, neighbor_nodes_idx)
+        
         # sample subgraph using the given edges (or boolean mask of the available nodes)
         eg = dgl.edge_subgraph(sg, lu == neighbor_nodes_idx[s], relabel_nodes=False)
         # update the node data with the original node data
@@ -255,12 +238,12 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         sg = eg
         # get the original node ids from g
         nids = insg.ndata[dgl.NID][sg.ndata[dgl.NID].long()]
-        # [!] make sure UNBIASED
-        # Normalize probability distribution
+
         # get the probability for union nodes from P_sg which is unnormalized probability of the original subgraph.
         P = P_sg[u_nodes.long()]
         # get the edge weight for the edges in the current subgraph from W_sg which is edge weight from the original subgraph.
         W = W_sg[sg.edata[dgl.EID].long()]
+        
         # divide W over P
         W_tilde = dgl.ops.e_div_u(sg, W, P)
         # sum of W_tilde per node
@@ -270,20 +253,21 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # multiply W_tilde by d divided by W_tilde_sum
         W_tilde = dgl.ops.e_mul_v(sg, W_tilde, d / W_tilde_sum)
 
+        # W_tilde = dgl.ops.e_mul_v(sg, W, d[u_nodes].float())
+
         # Convert the graph into a block
         block = dgl.to_block(sg, seed_nodes_idx.type(sg.idtype))
         # update the edge data with W_tilde
         block.edata[self.output_weight] = W_tilde
-        # 
+        # add edge prob
         block.edata['q_ij'] = W
-        # add prob
+        # add node prob
         block.srcdata[self.node_prob] = P
 
-        # correct node ID mapping for source nodes
+        # get node ID mapping for source nodes
         block.srcdata[dgl.NID] = nids[block.srcdata[dgl.NID].long()]
-        # correct node ID mapping for destination nodes
+        # set node ID mapping for destination nodes
         block.dstdata[dgl.NID] = nids[block.dstdata[dgl.NID].long()]
-        
         # get the original edge ids 
         sg_eids = insg.edata[dgl.EID][sg.edata[dgl.EID].long()]
         # set the original edge ids to the block
@@ -292,40 +276,35 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
     
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
         if self.exp3_weights == None:
-          self.exp3_weights = torch.ones(len(self.nodes_per_layer), g.num_edges())
+          self.exp3_weights = torch.ones(len(self.nodes_per_layer), g.num_edges()).to(g.device)
         #   print('initial exp3_weights', self.exp3_weights, self.exp3_weights.shape, self.exp3_weights[0].shape)
         
         # convert seed_nodes IDs to tensor
         seed_nodes = torch.tensor(seed_nodes)
-
         # copy seed_nodes to output_nodes (seed_nodes will be updated, output_nodes not)
         output_nodes = seed_nodes
-    
         # empty list 
         blocks = []
         # loop on the reverse of block IDs
         for block_id in reversed(range(len(self.nodes_per_layer))):
             # get the number of sample from nodes_per_layer per each block
             num_nodes_to_sample = self.nodes_per_layer[block_id]
-
             # calc exp3_prob, 1 / N_i
             exp3_prob = self.exp3_probabilities(block_id, g, seed_nodes)
             # print('exp3_prob', exp3_prob, exp3_prob.shape)
-
             # run compute_prob to get the unnormalized prob and subgraph
             prob, insg = self.compute_prob(g, seed_nodes, exp3_prob)
             # print('prob', prob, prob.shape)
-
             # get the edge weight from the original graph (exp3)
-            # W = g.edata[self.edge_weight]
+            # W = g.edata[self.edge_weight][insg.edata[dgl.EID].long()]
+            # print('alpha', W, W.shape)
             W = exp3_prob #[insg.edata[dgl.EID].long()]
-
+            # W = self.exp3_weights[block_id][insg.edata[dgl.EID].long()]
+            # print('W', W, W.shape)
             # sample the best n neighbor nodes from given the probabilities of neighbors (and the current nodes)
             chosen_nodes = self.select_neighbors(prob, num_nodes_to_sample)
-            
             # generate block for the sampled nodes and the previous nodes
             block = self.generate_block(insg, chosen_nodes.type(g.idtype), seed_nodes.type(g.idtype), prob, W)
-            
             # update the seed_nodes with the sampled neighbors nodes to sample another block foe them in the next iteration
             seed_nodes = block.srcdata[dgl.NID]
             # print('block.edata', block.edata)
