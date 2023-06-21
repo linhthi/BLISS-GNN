@@ -31,30 +31,45 @@ import time
 import math
 import itertools
 
+# th.set_printoptions(profile="full")
+
 from load_graph import load_dataset, inductive_split
 
 from torchmetrics import Accuracy, F1Score
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
-from model import SAGE
+from model import SAGE, GATv2
 
 from ladies import LadiesSampler, normalized_edata#, PoissonLadiesSampler
 from dgl_bandit_sampler import *
 
-class SAGELightning(LightningModule):
+class ModelLightning(LightningModule):
     def __init__(self,
                  in_feats,
                  n_hidden,
                  n_classes,
                  n_layers,
                  activation,
+                 num_in_heads,
+                 num_out_heads,
                  dropout,
+                 attn_dropout,
+                 negative_slope,
+                 residual,
                  lr,
-                 multilabel):
+                 multilabel,
+                 model):
         super().__init__()
         self.save_hyperparameters()
-        self.module = SAGE(in_feats, n_hidden, n_classes, n_layers, activation, dropout)
+        if model == 'sage':
+            if activation == None:
+                activation = F.relu
+            self.module = SAGE(in_feats, n_hidden, n_classes, n_layers, activation, dropout)
+        elif model == 'gat':
+            heads = ([num_in_heads] * n_layers) + [num_out_heads]
+            self.module = GATv2(n_layers, in_feats, n_hidden, n_classes, heads, activation,
+                                dropout, attn_dropout, negative_slope, residual)
         self.lr = lr
         # The usage of `train_acc` and `val_acc` is the recommended practice from now on as per
         # https://torchmetrics.readthedocs.io/en/latest/pages/lightning.html
@@ -313,11 +328,17 @@ if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--gpu', type=int, default=-1,
                            help="GPU device ID. Use -1 for CPU training")
+    argparser.add_argument('--model', type=str, default='sage')
     argparser.add_argument('--dataset', type=str, default='cora')
     argparser.add_argument('--num-epochs', type=int, default=-1)
     argparser.add_argument('--num-steps', type=int, default=5000)
     argparser.add_argument('--num-hidden', type=int, default=256)
     argparser.add_argument('--num-layers', type=int, default=3)
+    argparser.add_argument('--num_in_heads', type=int, default=8, help="number of hidden attention heads")
+    argparser.add_argument('--num_out_heads', type=int, default=1, help="number of output attention heads")
+    argparser.add_argument('--attn_dropout', type=float, default=0.5, help="attention dropout")
+    argparser.add_argument('--negative_slope', type=float, default=0.2, help="the negative slope of leaky relu")
+    argparser.add_argument('--residual', action="store_true", default=False, help="use residual connection")
     argparser.add_argument('--fan-out', type=str, default='10,10,10')
     argparser.add_argument('--batch-size', type=int, default=1000)
     argparser.add_argument('--log-every', type=int, default=20)
@@ -358,14 +379,16 @@ if __name__ == '__main__':
         [int(_) for _ in args.fan_out.split(',')],
         device, args.batch_size, args.num_workers, args.sampler, args.importance_sampling,
         args.layer_dependency, args.batch_dependency, args.cache_size, args.num_steps)
-    model = SAGELightning(
+    
+    model = ModelLightning(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
-        F.relu, args.dropout, args.lr, datamodule.multilabel)
+        None, args.num_in_heads, args.num_out_heads, args.dropout, args.attn_dropout, args.negative_slope, args.residual,
+        args.lr, datamodule.multilabel, args.model)
 
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
     batchsize_callback = BatchSizeCallback(args.vertex_limit)
-    subdir = '{}_{}_{}_{}_{}_{}'.format(args.dataset, args.sampler, args.importance_sampling,
+    subdir = '{}_{}_{}_{}_{}_{}'.format(args.model, args.dataset, args.sampler, args.importance_sampling,
                                      args.layer_dependency, args.batch_dependency, args.batch_size)
     logger = TensorBoardLogger(args.logdir, name=subdir)
     trainer = Trainer(gpus=[args.gpu] if args.gpu != -1 else None,
@@ -383,7 +406,7 @@ if __name__ == '__main__':
     print('Evaluating model in', logdir)
     ckpt = glob.glob(os.path.join(logdir, 'checkpoints', '*'))[0]
 
-    model = SAGELightning.load_from_checkpoint(
+    model = ModelLightning.load_from_checkpoint(
         checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
     test_acc, test_f1 = evaluate(model, datamodule.g, datamodule.n_classes, datamodule.multilabel, datamodule.test_nid, device)
     print('Test Accuracy:', test_acc)
