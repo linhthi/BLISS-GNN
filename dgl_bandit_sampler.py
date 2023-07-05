@@ -29,7 +29,8 @@ def normalized_edata(g, weight=None):
 
 class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000):
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
+                 allow_zero_in_degree=False, model='gat'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
         self.importance_sampling = importance_sampling
@@ -41,6 +42,8 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         self.eta = eta
         self.T = num_steps
         self.exp3_weights = None
+        self.allow_zero_in_degree = allow_zero_in_degree
+        self.model = model
     
     def compute_prob(self, g, seed_nodes, weight):
         """
@@ -111,8 +114,14 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         """
         # k is number of nodes in the subgraph (sample size or number of arms)
         k = self.nodes_per_layer[idx]
-        # alpha
-        alpha = mfg.edata[self.edge_weight]
+        if self.model == 'sage':
+            # alpha
+            alpha = mfg.edata[self.edge_weight]
+        elif self.model == 'gat':
+            q_ij = mfg.edata['q_ij']
+            print('q_ij', q_ij, q_ij.shape)
+            attention = mfg.edata['a_ij']
+            print('attention', attention, attention.shape)
         # calculate ||h_j(t)|| (node embedding norm)
         h_j_norm = mfg.srcdata['embed_norm']
         # node prob
@@ -121,6 +130,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         rewards = dgl.ops.e_mul_u(mfg, alpha**2, (h_j_norm ** 2) / (k * (q ** 2)))
         # store rewrds inside the block data
         mfg.edata['rewards'] = rewards
+        
     
     def update_exp3_weights(self, idx, mfg, g):
         """
@@ -256,6 +266,9 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # W_tilde = dgl.ops.e_mul_v(sg, W, d[u_nodes].float())
 
         # Convert the graph into a block
+        # if not self.allow_zero_in_degree:
+        #     sg = dgl.remove_self_loop(sg)
+        #     sg = dgl.add_self_loop(sg)
         block = dgl.to_block(sg, seed_nodes_idx.type(sg.idtype))
         # update the edge data with W_tilde
         block.edata[self.output_weight] = W_tilde
@@ -272,6 +285,10 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         sg_eids = insg.edata[dgl.EID][sg.edata[dgl.EID].long()]
         # set the original edge ids to the block
         block.edata[dgl.EID] = sg_eids[block.edata[dgl.EID].long()]
+
+        # if not self.allow_zero_in_degree:
+        #     block = dgl.remove_self_loop(block)
+        #     block = dgl.add_self_loop(block)
         return block
     
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
