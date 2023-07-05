@@ -57,19 +57,23 @@ class ModelLightning(LightningModule):
                  attn_dropout,
                  negative_slope,
                  residual,
+                 allow_zero_in_degree,
                  lr,
                  multilabel,
                  model):
         super().__init__()
         self.save_hyperparameters()
-        if model == 'sage':
+        self.model = model
+        if self.model == 'sage':
             if activation == None:
                 activation = F.relu
             self.module = SAGE(in_feats, n_hidden, n_classes, n_layers, activation, dropout)
-        elif model == 'gat':
+        elif self.model == 'gat':
+            if activation == None:
+                activation = F.elu
             heads = ([num_in_heads] * n_layers) + [num_out_heads]
             self.module = GATv2(n_layers, in_feats, n_hidden, n_classes, heads, activation,
-                                dropout, attn_dropout, negative_slope, residual)
+                                dropout, attn_dropout, negative_slope, residual, allow_zero_in_degree)
         self.lr = lr
         # The usage of `train_acc` and `val_acc` is the recommended practice from now on as per
         # https://torchmetrics.readthedocs.io/en/latest/pages/lightning.html
@@ -87,7 +91,10 @@ class ModelLightning(LightningModule):
         self.cum_sampled_nodes = [0 for _ in range(n_layers + 1)]
         self.cum_sampled_edges = [0 for _ in range(n_layers)]
         self.w = 0.99
-        self.loss_fn = nn.NLLLoss() if not multilabel else nn.BCELoss()
+        if self.model == 'sage':
+            self.loss_fn = nn.NLLLoss() if not multilabel else nn.BCELoss()
+        elif self.model == 'gat':
+            self.loss_fn = nn.CrossEntropyLoss() if not multilabel else nn.BCELoss()
         self.final_activation = nn.LogSoftmax(dim=1) if not multilabel else nn.Sigmoid()
         self.pt = 0
     
@@ -114,9 +121,13 @@ class ModelLightning(LightningModule):
         batch_inputs = mfgs[0].srcdata['features']
         batch_labels = mfgs[-1].dstdata['labels']
         batch_pred = self.module(mfgs, batch_inputs)
-        loss = self.loss_fn(self.final_activation(batch_pred), batch_labels)
-        self.train_acc(self.final_activation(batch_pred), batch_labels.int())
-        self.train_f1(self.final_activation(batch_pred), batch_labels.int())
+        if self.model == 'sage':
+            batch_pred = self.final_activation(batch_pred)
+        elif self.model == 'gat':
+            batch_pred = batch_pred
+        loss = self.loss_fn(batch_pred, batch_labels)
+        self.train_acc(batch_pred, batch_labels.int())
+        self.train_f1(batch_pred, batch_labels.int())
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_labels.shape[0])
         self.log('train_f1', self.train_f1, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_labels.shape[0])
         self.log('train_loss', loss, on_step=True, on_epoch=True, batch_size=batch_labels.shape[0])
@@ -131,9 +142,13 @@ class ModelLightning(LightningModule):
         batch_inputs = mfgs[0].srcdata['features']
         batch_labels = mfgs[-1].dstdata['labels']
         batch_pred = self.module(mfgs, batch_inputs)
-        loss = self.loss_fn(self.final_activation(batch_pred), batch_labels)
-        self.val_acc(self.final_activation(batch_pred), batch_labels.int())
-        self.val_f1(self.final_activation(batch_pred), batch_labels.int())
+        if self.model == 'sage':
+            batch_pred = self.final_activation(batch_pred)
+        elif self.model == 'gat':
+            batch_pred = batch_pred
+        loss = self.loss_fn(batch_pred, batch_labels)
+        self.val_acc(batch_pred, batch_labels.int())
+        self.val_f1(batch_pred, batch_labels.int())
         self.log('val_acc', self.val_acc, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True, batch_size=batch_labels.shape[0])
         self.log('val_f1', self.val_f1, prog_bar=True, on_step=True, on_epoch=True, sync_dist=True, batch_size=batch_labels.shape[0])
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=batch_labels.shape[0])
@@ -146,7 +161,8 @@ class ModelLightning(LightningModule):
 class DataModule(LightningDataModule):
     def __init__(self, dataset_name, data_cpu=False, graph_cpu=False, use_uva=False, fan_out=[10, 25],
                  device=th.device('cpu'), batch_size=1000, num_workers=4, sampler='labor',
-                 importance_sampling=0, layer_dependency=False, batch_dependency=1, cache_size=0, num_steps=5000):
+                 importance_sampling=0, layer_dependency=False, batch_dependency=1, cache_size=0,
+                 num_steps=5000, allow_zero_in_degree=False, model='gat'):
         super().__init__()
 
         g, n_classes, multilabel = load_dataset(dataset_name)
@@ -161,12 +177,16 @@ class DataModule(LightningDataModule):
         self.sampler_name = sampler
         self.num_steps = num_steps
         fanouts = [int(_) for _ in fan_out]
-        if sampler == 'neighbor':
+        if sampler == 'full':
+            sampler = dgl.dataloading.MultiLayerFullNeighborSampler(len(fanouts))
+        elif sampler == 'neighbor':
             sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
             #, prefetch_node_feats='features', prefetch_labels='labels')
         elif 'bandit' in sampler:
+            # [?] should be normalized?
             g.edata['w'] = normalized_edata(g)
-            sampler = BanditSampler(fanouts, node_embedding='features', num_steps=self.num_steps)
+            sampler = BanditSampler(fanouts, node_embedding='features', num_steps=self.num_steps,
+                                    allow_zero_in_degree=allow_zero_in_degree, model=model)
         elif 'ladies' in sampler:
             g.edata['w'] = normalized_edata(g)
             sampler = (PoissonLadiesSampler if 'poisson' in sampler else LadiesSampler)(fanouts)
@@ -193,6 +213,10 @@ class DataModule(LightningDataModule):
                             col.pin_memory_()
             dataloader_device = device
 
+        if not allow_zero_in_degree:
+            g = dgl.remove_self_loop(g)
+            g = dgl.add_self_loop(g)
+        
         self.g = g
         if cast_to_int:
             self.train_nid, self.val_nid, self.test_nid = train_nid.int(), val_nid.int(), test_nid.int()
@@ -296,7 +320,7 @@ class BatchSizeCallback(Callback):
             trainer.reset_val_dataloader()
             self.clear()
     
-def evaluate(model, g, n_classes, multilabel, val_nid, device):
+def evaluate(model, g, n_classes, multilabel, val_nid, device, softmax=True):
     """
     Evaluate the model on the validation set specified by ``val_nid``.
     g : The entire graph.
@@ -309,6 +333,7 @@ def evaluate(model, g, n_classes, multilabel, val_nid, device):
     with th.no_grad():
         pred = model.module.inference(g, nfeat, device, args.batch_size, args.num_workers)
     model.train()
+    
     if multilabel:
         test_acc = Accuracy(task="multilabel", num_labels=n_classes)
         test_f1 = F1Score(task="multilabel", num_labels=n_classes)
@@ -316,11 +341,13 @@ def evaluate(model, g, n_classes, multilabel, val_nid, device):
         test_acc = Accuracy(task="multiclass", num_classes = n_classes)
         test_f1 = F1Score(task="multiclass", num_classes = n_classes)
     
-    acc = test_acc(th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1),
-                   labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
-    
-    f1 = test_f1(th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1),
-                   labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    if softmax:
+        pred = th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1)
+    else:
+        pred[val_nid.to(device=pred.device, dtype=th.int64)]
+
+    acc = test_acc(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    f1 = test_f1(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
     return acc, f1
 
 
@@ -334,11 +361,12 @@ if __name__ == '__main__':
     argparser.add_argument('--num-steps', type=int, default=5000)
     argparser.add_argument('--num-hidden', type=int, default=256)
     argparser.add_argument('--num-layers', type=int, default=3)
-    argparser.add_argument('--num_in_heads', type=int, default=8, help="number of hidden attention heads")
-    argparser.add_argument('--num_out_heads', type=int, default=1, help="number of output attention heads")
-    argparser.add_argument('--attn_dropout', type=float, default=0.5, help="attention dropout")
-    argparser.add_argument('--negative_slope', type=float, default=0.2, help="the negative slope of leaky relu")
+    argparser.add_argument('--num-in-heads', type=int, default=8, help="number of hidden attention heads")
+    argparser.add_argument('--num-out-heads', type=int, default=1, help="number of output attention heads")
+    argparser.add_argument('--attn-dropout', type=float, default=0.5, help="attention dropout")
+    argparser.add_argument('--negative-slope', type=float, default=0.2, help="the negative slope of leaky relu")
     argparser.add_argument('--residual', action="store_true", default=False, help="use residual connection")
+    argparser.add_argument('--allow-zero-in-degree', action="store_true", default=False, help="allow zero in degree")
     argparser.add_argument('--fan-out', type=str, default='10,10,10')
     argparser.add_argument('--batch-size', type=int, default=1000)
     argparser.add_argument('--log-every', type=int, default=20)
@@ -347,8 +375,7 @@ if __name__ == '__main__':
     argparser.add_argument('--dropout', type=float, default=0.5)
     argparser.add_argument('--num-workers', type=int, default=0,
                            help="Number of sampling processes. Use 0 for no extra process.")
-    argparser.add_argument('--inductive', action='store_true',
-                           help="Inductive learning setting")
+    argparser.add_argument('--inductive', action='store_true', help="Inductive learning setting")
     argparser.add_argument('--data-cpu', action='store_true',
                            help="By default the script puts the node features and labels "
                                 "on GPU when using it to save time for data copy. This may "
@@ -378,12 +405,13 @@ if __name__ == '__main__':
         args.dataset, args.data_cpu, args.graph_cpu, args.use_uva,
         [int(_) for _ in args.fan_out.split(',')],
         device, args.batch_size, args.num_workers, args.sampler, args.importance_sampling,
-        args.layer_dependency, args.batch_dependency, args.cache_size, args.num_steps)
+        args.layer_dependency, args.batch_dependency, args.cache_size, args.num_steps,
+        args.allow_zero_in_degree)
     
     model = ModelLightning(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
         None, args.num_in_heads, args.num_out_heads, args.dropout, args.attn_dropout, args.negative_slope, args.residual,
-        args.lr, datamodule.multilabel, args.model)
+        args.allow_zero_in_degree, args.lr, datamodule.multilabel, args.model)
 
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
@@ -408,6 +436,11 @@ if __name__ == '__main__':
 
     model = ModelLightning.load_from_checkpoint(
         checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
-    test_acc, test_f1 = evaluate(model, datamodule.g, datamodule.n_classes, datamodule.multilabel, datamodule.test_nid, device)
+    
+    if args.model == 'sage':
+        softmax = True
+    elif args.model == 'gat':
+        softmax = False
+    test_acc, test_f1 = evaluate(model, datamodule.g, datamodule.n_classes, datamodule.multilabel, datamodule.test_nid, device, softmax)
     print('Test Accuracy:', test_acc)
     print('Test F1:', test_f1)
