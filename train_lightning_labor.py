@@ -346,8 +346,13 @@ def evaluate(model, g, n_classes, multilabel, val_nid, device, softmax=True):
     else:
         pred[val_nid.to(device=pred.device, dtype=th.int64)]
 
-    acc = test_acc(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
-    f1 = test_f1(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    # print("Test: ", pred.shape, labels[val_nid.to(device=labels.device, dtype=th.int64)].shape)
+    # acc = test_acc(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    # f1 = test_f1(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    print("Test: ", pred.shape, labels.shape)
+    acc = test_acc(pred, labels.to(pred.device))
+    f1 = test_f1(pred, labels.to(pred.device))
+    
     return acc, f1
 
 

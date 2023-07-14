@@ -120,8 +120,9 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         elif self.model == 'gat':
             q_ij = mfg.edata['q_ij']
             print('q_ij', q_ij, q_ij.shape)
-            attention = mfg.edata['a_ij']
-            print('attention', attention, attention.shape)
+            # alpha = mfg.edata[self.edge_weight]
+            alpha = mfg.edata['a_ij']
+            print('attention', alpha.shape)
         # calculate ||h_j(t)|| (node embedding norm)
         h_j_norm = mfg.srcdata['embed_norm']
         # node prob

@@ -128,12 +128,14 @@ class GATv2(nn.Module):
 
     def forward(self, blocks, inputs):
         h = inputs
-        # a = th.ones(h.shape)
+        a = th.ones(h.shape)
         for l, block in enumerate(blocks):
             # save the mag of (h) into block.srcdata
             block.srcdata['embed_norm'] = th.reshape(th.norm(h, dim=1, keepdim=True), (-1,))
-            # block.edata['a_ij'] = a
             h, a = self.gatv2_layers[l](block, h, get_attention=True)
+            a = th.mean(a.squeeze(dim=2), dim=1) # average attention weights across heads
+            block.edata['a_ij'] = a
+            print("For layer {}, the shape of a_ij is {}".format(l, a.shape))
             if l != len(blocks) - 1:
                 h = h.flatten(1)
             else:
