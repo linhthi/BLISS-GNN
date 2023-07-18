@@ -118,11 +118,23 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             # alpha
             alpha = mfg.edata[self.edge_weight]
         elif self.model == 'gat':
+            # print('len nodes', mfg.srcdata['labels'].shape)
             q_ij = mfg.edata['q_ij']
-            print('q_ij', q_ij, q_ij.shape)
-            # alpha = mfg.edata[self.edge_weight]
-            alpha = mfg.edata['a_ij']
-            print('attention', alpha.shape)
+            # print('q_ij', q_ij, q_ij.shape)
+            attention = mfg.edata['a_ij']
+            # attentionn = mfg.edata['an_ij']
+            # print('attention', attention, attention.shape)
+            # print('attentionn', attentionn, attentionn.shape)
+            q_ij_sum = dgl.ops.copy_e_sum(mfg, q_ij)
+            # print('q_ij_sum', q_ij_sum, q_ij_sum.shape)
+            attention_sum = dgl.ops.copy_e_sum(mfg, attention)
+            # print('attention_sum', attention_sum, attention_sum.shape)
+            attention_div_attention_sum = dgl.ops.e_div_v(mfg, attention, attention_sum)
+            # print('attention_div_attention_sum', attention_div_attention_sum, attention_div_attention_sum.shape)
+            alpha = dgl.ops.e_dot_v(mfg, attention_div_attention_sum, q_ij_sum)
+            alpha = torch.nan_to_num(alpha)
+            # print('alpha', alpha, alpha.shape)
+
         # calculate ||h_j(t)|| (node embedding norm)
         h_j_norm = mfg.srcdata['embed_norm']
         # node prob
@@ -208,6 +220,9 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         """        
         # loop over all blocks (layers)
         for idx, mfg in enumerate(mfgs):
+            # print('idx', idx)
+            # print('mfg', mfg.srcdata[dgl.NID].shape)
+            # continue
             # calculate rewards
             self.calculate_rewards(idx, mfg)
             # update exp3 weights
@@ -247,6 +262,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         eg.edata[dgl.EID] = sg.edata[dgl.EID][eg.edata[dgl.EID].long()]
         # update the first subgraph with the updated edge subgraph
         sg = eg
+        # print('sg', sg)
         # get the original node ids from g
         nids = insg.ndata[dgl.NID][sg.ndata[dgl.NID].long()]
 

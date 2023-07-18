@@ -349,10 +349,9 @@ def evaluate(model, g, n_classes, multilabel, val_nid, device, softmax=True):
     # print("Test: ", pred.shape, labels[val_nid.to(device=labels.device, dtype=th.int64)].shape)
     # acc = test_acc(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
     # f1 = test_f1(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
-    print("Test: ", pred.shape, labels.shape)
+    # print("Test: ", pred.shape, labels.shape)
     acc = test_acc(pred, labels.to(pred.device))
     f1 = test_f1(pred, labels.to(pred.device))
-    
     return acc, f1
 
 
@@ -366,7 +365,7 @@ if __name__ == '__main__':
     argparser.add_argument('--num-steps', type=int, default=5000)
     argparser.add_argument('--num-hidden', type=int, default=256)
     argparser.add_argument('--num-layers', type=int, default=3)
-    argparser.add_argument('--num-in-heads', type=int, default=8, help="number of hidden attention heads")
+    argparser.add_argument('--num-in-heads', type=int, default=1, help="number of hidden attention heads")
     argparser.add_argument('--num-out-heads', type=int, default=1, help="number of output attention heads")
     argparser.add_argument('--attn-dropout', type=float, default=0.5, help="attention dropout")
     argparser.add_argument('--negative-slope', type=float, default=0.2, help="the negative slope of leaky relu")
