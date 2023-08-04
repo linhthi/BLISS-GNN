@@ -29,7 +29,7 @@ def normalized_edata(g, weight=None):
 
 class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=50,
                  allow_zero_in_degree=False, model='gat'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
@@ -141,6 +141,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         q = mfg.srcdata[self.node_prob]
         # calculate rewards (alpha**2 * ||h_j(t)||**2) / (k * q**2)
         rewards = dgl.ops.e_mul_u(mfg, alpha**2, (h_j_norm ** 2) / (k * (q ** 2)))
+        # rewards = dgl.ops.e_mul_u(mfg, alpha**2, k* (q ** 2))
         # store rewrds inside the block data
         mfg.edata['rewards'] = rewards
         
@@ -161,8 +162,10 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         n = g.in_degrees()[mfg.srcdata[dgl.NID].long()]
         # Calculate the delta value for exp3
         # delta: sqrt((1 - eta) * eta^4 * k^5 * ln(n/k) / (T*n^4))
-        # delta = torch.sqrt((1 - self.eta) * self.eta**4 * k**5 * torch.log(n/k) / (self.T * n**4))
-        delta = 1/n**2
+        delta = torch.sqrt((1 - self.eta) * self.eta**4 * k**5 * torch.log(n/k) / (self.T * n**4))
+        delta = torch.nan_to_num(delta)
+        # delta = 1/n**2
+        # print("Delta: ", delta, 1/n**2)
         # The rewards obtained for each node in the previous iteration
         rewards = mfg.edata['rewards'].clone().detach()
         # Unnormalized probability distribution of edges in the current subgraph.

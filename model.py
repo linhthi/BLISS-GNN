@@ -141,8 +141,8 @@ class GATv2(nn.Module):
             # save the mag of (h) into block.srcdata
             block.srcdata['embed_norm'] = th.reshape(th.norm(h, dim=1, keepdim=True), (-1,))
             h, a = self.gatv2_layers[l](block, h, get_attention=True)
-            # a = th.sum(a.squeeze(dim=2), dim=1) # average attention weights across heads
-            a = a.squeeze(dim=-1).squeeze(dim=-1) # one head
+            a = th.sum(a.squeeze(dim=2), dim=1) # average attention weights across heads
+            # a = a.squeeze(dim=-1).squeeze(dim=-1) # one head
             block.edata['a_ij'] = a
             # block.edata['an_ij'] = an
             if l != len(blocks) - 1:
