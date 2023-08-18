@@ -88,9 +88,9 @@ class custom_GATv2Conv(dglnn.GATv2Conv):
                 rst = self.activation(rst)
 
             if get_attention:
-                # return rst, graph.edata["a"]
+                return rst, graph.edata["a"]
                 # return rst, e, graph.edata["a"]
-                return rst, e
+                # return rst, e
             else:
                 return rst
 
@@ -110,7 +110,7 @@ class GATv2(nn.Module):
         print('allow_zero_in_degree', allow_zero_in_degree)
         if not allow_zero_in_degree:
             allow_zero_in_degree = not allow_zero_in_degree
-        print('allow_zero_in_degree', allow_zero_in_degree)
+            print('allow_zero_in_degree', allow_zero_in_degree)
         
         # input projection (no residual)
         self.gatv2_layers.append(
@@ -141,8 +141,11 @@ class GATv2(nn.Module):
             # save the mag of (h) into block.srcdata
             block.srcdata['embed_norm'] = th.reshape(th.norm(h, dim=1, keepdim=True), (-1,))
             h, a = self.gatv2_layers[l](block, h, get_attention=True)
-            # a = th.sum(a.squeeze(dim=2), dim=1) # average attention weights across heads
-            a = a.squeeze(dim=-1).squeeze(dim=-1) # one head
+            # print('aold', a, a.shape)
+            a = th.mean(a.squeeze(dim=-1), dim=1) # average attention weights across heads
+            # a = a.squeeze(dim=-1).squeeze(dim=-1) # one head
+            # print('a', a, a.shape)
+            # print('an', an, an.shape)
             block.edata['a_ij'] = a
             # block.edata['an_ij'] = an
             if l != len(blocks) - 1:
