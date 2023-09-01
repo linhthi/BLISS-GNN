@@ -31,13 +31,13 @@ import time
 import math
 import itertools
 
-# th.set_printoptions(profile="full")
+th.set_printoptions(profile="full")
 
 from load_graph import load_dataset, inductive_split
 
 from torchmetrics import Accuracy, F1Score
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback
-from pytorch_lightning import LightningDataModule, LightningModule, Trainer
+from pytorch_lightning import LightningDataModule, LightningModule, Trainer, seed_everything
 from pytorch_lightning.loggers import TensorBoardLogger
 from model import SAGE, GATv2
 
@@ -126,6 +126,7 @@ class ModelLightning(LightningModule):
         elif self.model == 'gat':
             batch_pred = batch_pred
         loss = self.loss_fn(batch_pred, batch_labels)
+
         self.train_acc(batch_pred, batch_labels.int())
         self.train_f1(batch_pred, batch_labels.int())
         self.log('train_acc', self.train_acc, prog_bar=True, on_step=True, on_epoch=True, batch_size=batch_labels.shape[0])
@@ -154,7 +155,7 @@ class ModelLightning(LightningModule):
         self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True, batch_size=batch_labels.shape[0])
 
     def configure_optimizers(self):
-        optimizer = th.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = th.optim.Adam(self.parameters(), lr=self.lr, weight_decay=0.0001)
         return optimizer
 
 
@@ -162,10 +163,18 @@ class DataModule(LightningDataModule):
     def __init__(self, dataset_name, data_cpu=False, graph_cpu=False, use_uva=False, fan_out=[10, 25],
                  device=th.device('cpu'), batch_size=1000, num_workers=4, sampler='labor',
                  importance_sampling=0, layer_dependency=False, batch_dependency=1, cache_size=0,
-                 num_steps=5000, allow_zero_in_degree=False, model='gat'):
+                 num_steps=5000, allow_zero_in_degree=False, model='gat', seed=123):
         super().__init__()
 
+        seed_everything(seed)
         g, n_classes, multilabel = load_dataset(dataset_name)
+        #############TEMP#############
+        # seed_nodes_ = torch.tensor([1, 2, 652])
+        # # create new subgraph using the incoming edges of the given nodes
+        # g = dgl.in_subgraph(g, seed_nodes_)
+        # # eliminate the isolated nodes across graph
+        # g = dgl.compact_graphs(g, seed_nodes_)
+        ##############################
         cast_to_int = max(g.num_nodes(), g.num_edges()) <= 2e9
         if cast_to_int:
             g = g.int()
@@ -314,6 +323,11 @@ class BatchSizeCallback(Callback):
             trainer.datamodule.sampler.exp3(mfgs, trainer.datamodule.g)
     
     def on_train_epoch_end(self, trainer, datamodule):
+        if 'bandit' in trainer.datamodule.sampler_name:
+            # calculate reward, update exp3 weights and update exp3 probabilities
+            print('weight_max', trainer.datamodule.sampler.exp3_weights.max(1))
+            print('weight_min', trainer.datamodule.sampler.exp3_weights.min(1))
+
         if self.limit > 0 and self.n >= 2 and abs(self.limit - self.m) * self.n >= self.std * self.factor:
             trainer.datamodule.batch_size = int(trainer.datamodule.batch_size * self.limit / self.m)
             trainer.reset_train_dataloader()
@@ -343,11 +357,16 @@ def evaluate(model, g, n_classes, multilabel, val_nid, device, softmax=True):
     
     if softmax:
         pred = th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1)
+        # print(pred.shape)
     else:
         pred[val_nid.to(device=pred.device, dtype=th.int64)]
 
-    acc = test_acc(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
-    f1 = test_f1(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    # print("Test: ", pred.shape, labels[val_nid.to(device=labels.device, dtype=th.int64)].shape)
+    # acc = test_acc(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    # f1 = test_f1(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
+    # print("Test: ", pred.shape, labels.shape)
+    acc = test_acc(pred,labels[val_nid.to(device=labels.device, dtype=th.int64)])
+    f1 = test_f1(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)])
     return acc, f1
 
 
@@ -359,20 +378,20 @@ if __name__ == '__main__':
     argparser.add_argument('--dataset', type=str, default='cora')
     argparser.add_argument('--num-epochs', type=int, default=-1)
     argparser.add_argument('--num-steps', type=int, default=5000)
-    argparser.add_argument('--num-hidden', type=int, default=256)
+    argparser.add_argument('--num-hidden', type=int, default=64)
     argparser.add_argument('--num-layers', type=int, default=3)
-    argparser.add_argument('--num-in-heads', type=int, default=8, help="number of hidden attention heads")
+    argparser.add_argument('--num-in-heads', type=int, default=4, help="number of hidden attention heads")
     argparser.add_argument('--num-out-heads', type=int, default=1, help="number of output attention heads")
-    argparser.add_argument('--attn-dropout', type=float, default=0.5, help="attention dropout")
+    argparser.add_argument('--attn-dropout', type=float, default=0.0, help="attention dropout")
     argparser.add_argument('--negative-slope', type=float, default=0.2, help="the negative slope of leaky relu")
     argparser.add_argument('--residual', action="store_true", default=False, help="use residual connection")
     argparser.add_argument('--allow-zero-in-degree', action="store_true", default=False, help="allow zero in degree")
     argparser.add_argument('--fan-out', type=str, default='10,10,10')
-    argparser.add_argument('--batch-size', type=int, default=1000)
+    argparser.add_argument('--batch-size', type=int, default=256)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)
-    argparser.add_argument('--lr', type=float, default=0.001)
-    argparser.add_argument('--dropout', type=float, default=0.5)
+    argparser.add_argument('--lr', type=float, default=0.01)
+    argparser.add_argument('--dropout', type=float, default=0.0)
     argparser.add_argument('--num-workers', type=int, default=0,
                            help="Number of sampling processes. Use 0 for no extra process.")
     argparser.add_argument('--inductive', action='store_true', help="Inductive learning setting")
@@ -394,6 +413,7 @@ if __name__ == '__main__':
     argparser.add_argument('--logdir', type=str, default='tb_logs')
     argparser.add_argument('--vertex-limit', type=int, default=-1)
     argparser.add_argument('--use-uva', action='store_true')
+    argparser.add_argument('--seed', type=int, default=123)
     args = argparser.parse_args()
 
     if args.gpu >= 0:
@@ -406,7 +426,7 @@ if __name__ == '__main__':
         [int(_) for _ in args.fan_out.split(',')],
         device, args.batch_size, args.num_workers, args.sampler, args.importance_sampling,
         args.layer_dependency, args.batch_dependency, args.cache_size, args.num_steps,
-        args.allow_zero_in_degree)
+        args.allow_zero_in_degree, args.model, args.seed)
     
     model = ModelLightning(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
@@ -440,7 +460,7 @@ if __name__ == '__main__':
     if args.model == 'sage':
         softmax = True
     elif args.model == 'gat':
-        softmax = False
+        softmax = True
     test_acc, test_f1 = evaluate(model, datamodule.g, datamodule.n_classes, datamodule.multilabel, datamodule.test_nid, device, softmax)
     print('Test Accuracy:', test_acc)
     print('Test F1:', test_f1)
