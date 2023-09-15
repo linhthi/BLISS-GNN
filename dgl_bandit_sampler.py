@@ -58,11 +58,12 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         insg = dgl.compact_graphs(insg, seed_nodes)
         if self.importance_sampling:
             out_frontier = dgl.reverse(insg, copy_edata=True)
-            weight = weight# [out_frontier.edata[dgl.EID].long()] 
-            weight_sum = dgl.ops.copy_e_sum(out_frontier, weight)
-            weight_div_sum = dgl.ops.e_div_v(out_frontier, weight, weight_sum)
-            prob = dgl.ops.copy_e_sum(out_frontier, weight_div_sum ** 2)
-            prob = torch.sqrt(prob)
+            weight = weight[out_frontier.edata[dgl.EID].long()] 
+            # weight_sum = dgl.ops.copy_e_sum(out_frontier, weight)
+            # weight_div_sum = dgl.ops.e_div_v(out_frontier, weight, weight_sum)
+            # prob = dgl.ops.copy_e_sum(out_frontier, weight_div_sum ** 2)
+            prob = dgl.ops.copy_e_sum(out_frontier, weight ** 2)
+            # prob = torch.sqrt(prob)
         else:
             prob = torch.ones(insg.num_nodes())
             prob[insg.out_degrees() == 0] = 0
@@ -264,6 +265,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             
             W = g.edata[self.edge_weight]
             prob, insg = self.compute_prob(g, seed_nodes, W)
+
             chosen_nodes = self.select_neighbors(prob, num_nodes_to_sample)
             block = self.generate_block(insg, chosen_nodes.type(g.idtype), seed_nodes.type(g.idtype), prob, W)
             seed_nodes = block.srcdata[dgl.NID]
