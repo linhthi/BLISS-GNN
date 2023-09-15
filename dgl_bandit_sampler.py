@@ -29,7 +29,7 @@ def normalized_edata(g, weight=None):
 
 class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, T=40,
                  allow_zero_in_degree=False, model='gat'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
@@ -40,7 +40,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         self.node_embedding = node_embedding
         self.replace = replace
         self.eta = eta
-        self.T = num_steps
+        self.T = T
         self.exp3_weights = None
         self.allow_zero_in_degree = allow_zero_in_degree
         self.model = model
@@ -64,7 +64,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
           # reverse the edges (top-down)
           out_frontier = dgl.reverse(insg, copy_edata=True)
           # get the weights of the subgraph edges, calc q_ij
-          weight = weight# [out_frontier.edata[dgl.EID].long()] 
+          weight = weight # [out_frontier.edata[dgl.EID].long()] 
           # calc sum of q_ij
           weight_sum = dgl.ops.copy_e_sum(out_frontier, weight)
           # # q_ij / SUM(q_ij)
@@ -73,6 +73,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
           prob = dgl.ops.copy_e_sum(out_frontier, weight_div_sum ** 2)
           # take the square root to follow the importance sampling equation
           prob = torch.sqrt(prob)
+          # prob = dgl.ops.copy_e_sum(out_frontier, weight**2)
         else:
           # prob for choosing any neighbor is 1
           prob = torch.ones(insg.num_nodes())
@@ -120,6 +121,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             # print('attention_div_attention_sum', attention_div_attention_sum, attention_div_attention_sum.shape)
             alpha = dgl.ops.e_dot_v(mfg, attention_div_attention_sum, q_ij_sum)
             # print('alpha', alpha, alpha.shape)
+            # alpha = mfg.edata['q_ij']
         return alpha
 
     def calculate_rewards(self, idx, mfg, alpha, epsilon=1e-5):
@@ -140,7 +142,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # node prob
         q = mfg.srcdata[self.node_prob]
         # calculate rewards (alpha**2 * ||h_j(t)||**2) / (k * q**2)
-        rewards = dgl.ops.e_mul_u(mfg, alpha**2, (h_j_norm ** 2) / (k * (q ** 2)))
+        rewards = dgl.ops.e_mul_u(mfg, alpha**2, (h_j_norm**2) / (k * (q**2)))
         # rewards = dgl.ops.e_mul_u(mfg, alpha**2, k* (q ** 2))
         # store rewrds inside the block data
         mfg.edata['rewards'] = rewards
@@ -164,7 +166,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # delta: sqrt((1 - eta) * eta^4 * k^5 * ln(n/k) / (T*n^4))
         delta = torch.sqrt((1 - self.eta) * self.eta**4 * k**5 * torch.log(n/k) / (self.T * n**4))
         delta = torch.nan_to_num(delta)
-        # delta = 1/n**2
+        # delta = 0.04/n**2
         # print("Delta: ", delta, 1/n**2)
         # The rewards obtained for each node in the previous iteration
         rewards = mfg.edata['rewards'].clone().detach()
@@ -175,7 +177,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # print('prob', prob, prob.shape)
 
         # Compute rewards_hat by dividing rewards by edge probabilities
-        rewards_hat = rewards**2 / prob**2
+        rewards_hat = rewards / prob
         # print('rewards_hat', rewards_hat, rewards_hat.shape)
 
         # Compute exponential weight for edges
@@ -292,6 +294,8 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # update the edge data with W_tilde
         block.edata[self.output_weight] = W_tilde
         # add edge prob
+        ## print("Tested, d_shape, w_sahpe:", W.shape, block.in_degree())
+        
         block.edata['q_ij'] = W
         # add node prob
         block.srcdata[self.node_prob] = P
