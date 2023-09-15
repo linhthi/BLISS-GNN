@@ -323,10 +323,10 @@ class BatchSizeCallback(Callback):
             trainer.datamodule.sampler.exp3(mfgs, trainer.datamodule.g)
     
     def on_train_epoch_end(self, trainer, datamodule):
-        if 'bandit' in trainer.datamodule.sampler_name:
+        # if 'bandit' in trainer.datamodule.sampler_name:
             # calculate reward, update exp3 weights and update exp3 probabilities
-            print('weight_max', trainer.datamodule.sampler.exp3_weights.max(1))
-            print('weight_min', trainer.datamodule.sampler.exp3_weights.min(1))
+            # print('weight_max', trainer.datamodule.sampler.exp3_weights.max(1))
+            # print('weight_min', trainer.datamodule.sampler.exp3_weights.min(1))
 
         if self.limit > 0 and self.n >= 2 and abs(self.limit - self.m) * self.n >= self.std * self.factor:
             trainer.datamodule.batch_size = int(trainer.datamodule.batch_size * self.limit / self.m)
