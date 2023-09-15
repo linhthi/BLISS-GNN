@@ -36,7 +36,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         self.node_embedding = node_embedding
         self.replace = replace
         self.eta = eta
-        self.T = num_steps
+        self.T = T
         self.exp3_weights = None # I think with each blocks we need to have a separate exp3_weights
         self.allow_zero_in_degree = allow_zero_in_degree
         self.model = model
