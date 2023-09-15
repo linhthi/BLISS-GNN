@@ -163,7 +163,7 @@ class DataModule(LightningDataModule):
     def __init__(self, dataset_name, data_cpu=False, graph_cpu=False, use_uva=False, fan_out=[10, 25],
                  device=th.device('cpu'), batch_size=1000, num_workers=4, sampler='labor',
                  importance_sampling=0, layer_dependency=False, batch_dependency=1, cache_size=0,
-                 num_steps=5000, allow_zero_in_degree=False, model='gat', seed=123):
+                 T=40, allow_zero_in_degree=False, model='gat', seed=123):
         super().__init__()
 
         seed_everything(seed)
@@ -184,7 +184,7 @@ class DataModule(LightningDataModule):
         test_nid = th.nonzero(~(g.ndata['train_mask'] | g.ndata['val_mask']), as_tuple=True)[0]
 
         self.sampler_name = sampler
-        self.num_steps = num_steps
+        self.T = T
         fanouts = [int(_) for _ in fan_out]
         if sampler == 'full':
             sampler = dgl.dataloading.MultiLayerFullNeighborSampler(len(fanouts))
@@ -194,7 +194,7 @@ class DataModule(LightningDataModule):
         elif 'bandit' in sampler:
             # [?] should be normalized?
             g.edata['w'] = normalized_edata(g)
-            sampler = BanditSampler(fanouts, node_embedding='features', num_steps=self.num_steps,
+            sampler = BanditSampler(fanouts, node_embedding='features', T=self.T,
                                     allow_zero_in_degree=allow_zero_in_degree, model=model)
         elif 'ladies' in sampler:
             g.edata['w'] = normalized_edata(g)
@@ -349,24 +349,24 @@ def evaluate(model, g, n_classes, multilabel, val_nid, device, softmax=True):
     model.train()
     
     if multilabel:
-        test_acc = Accuracy(task="multilabel", num_labels=n_classes)
-        test_f1 = F1Score(task="multilabel", num_labels=n_classes)
+        test_acc = Accuracy(task="multilabel", num_labels=n_classes).to(device)
+        test_f1 = F1Score(task="multilabel", num_labels=n_classes).to(device)
     else:
-        test_acc = Accuracy(task="multiclass", num_classes = n_classes)
-        test_f1 = F1Score(task="multiclass", num_classes = n_classes)
+        test_acc = Accuracy(task="multiclass", num_classes = n_classes).to(device)
+        test_f1 = F1Score(task="multiclass", num_classes = n_classes).to(device)
     
     if softmax:
-        pred = th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1)
+        pred = th.softmax(pred[val_nid.to(device=pred.device, dtype=th.int64)], -1).to(device)
         # print(pred.shape)
     else:
-        pred[val_nid.to(device=pred.device, dtype=th.int64)]
+        pred[val_nid.to(device=pred.device, dtype=th.int64)].to(device)
 
     # print("Test: ", pred.shape, labels[val_nid.to(device=labels.device, dtype=th.int64)].shape)
     # acc = test_acc(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
     # f1 = test_f1(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)].to(pred.device))
     # print("Test: ", pred.shape, labels.shape)
-    acc = test_acc(pred,labels[val_nid.to(device=labels.device, dtype=th.int64)])
-    f1 = test_f1(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)])
+    acc = test_acc(pred,labels[val_nid.to(device=labels.device, dtype=th.int64)]).to(device)
+    f1 = test_f1(pred, labels[val_nid.to(device=labels.device, dtype=th.int64)]).to(device)
     return acc, f1
 
 
@@ -378,6 +378,7 @@ if __name__ == '__main__':
     argparser.add_argument('--dataset', type=str, default='cora')
     argparser.add_argument('--num-epochs', type=int, default=-1)
     argparser.add_argument('--num-steps', type=int, default=5000)
+    argparser.add_argument('--T', type=int, default=40)
     argparser.add_argument('--num-hidden', type=int, default=64)
     argparser.add_argument('--num-layers', type=int, default=3)
     argparser.add_argument('--num-in-heads', type=int, default=4, help="number of hidden attention heads")
@@ -425,7 +426,7 @@ if __name__ == '__main__':
         args.dataset, args.data_cpu, args.graph_cpu, args.use_uva,
         [int(_) for _ in args.fan_out.split(',')],
         device, args.batch_size, args.num_workers, args.sampler, args.importance_sampling,
-        args.layer_dependency, args.batch_dependency, args.cache_size, args.num_steps,
+        args.layer_dependency, args.batch_dependency, args.cache_size, args.T,
         args.allow_zero_in_degree, args.model, args.seed)
     
     model = ModelLightning(

@@ -25,7 +25,7 @@ def normalized_edata(g, weight=None):
 
 class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, T=40,
                  allow_zero_in_degree=False, model='gat'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
@@ -102,7 +102,6 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             attention_div_attention_sum = dgl.ops.e_div_v(mfg, attention, attention_sum)
             attention_div_attention_sum = torch.nan_to_num(attention_div_attention_sum)
             alpha = dgl.ops.e_dot_v(mfg, attention_div_attention_sum, q_ij_sum)
-
         return alpha
 
     def calculate_rewards(self, idx, mfg, alpha, epsilon=1e-5):
