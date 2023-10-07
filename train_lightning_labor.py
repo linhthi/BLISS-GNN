@@ -19,7 +19,7 @@
 #  * \brief labor sampling example
 #  */
 
-from ladies_toy import LadiesSampler  # , PoissonLadiesSampler
+from ladies_toy import LadiesSampler, PoissonLadiesSampler
 from dgl_bandit_sampler import *
 from model import SAGE, GATv2
 from pytorch_lightning.loggers import TensorBoardLogger
