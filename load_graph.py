@@ -97,7 +97,7 @@ class ToyDataset(DGLDataset):
         self.graph = dgl.graph(([2, 3, 3, 4], [0, 0, 1, 1] ), num_nodes=5, col_sorted=True)
         self.graph.ndata["features"] = th.tensor([[0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 1, 0], [0, 0, 0, 1], [1, 0, 0, 0]] , dtype=th.float32)
         self.graph.ndata["labels"] = th.tensor([0, 0, 1, 1, 1] , dtype= th.float).type(th.LongTensor)
-        self.graph.edata["weight"] = th.FloatTensor([0.5, 0.5, 0.4, 0.6])
+        self.graph.edata["weight"] = th.FloatTensor([0.5, 0.5, 0.3, 0.7])
 
         # If your dataset is a node classification dataset, you will need to assign
         # masks indicating whether a node belongs to training, validation, and test set.
