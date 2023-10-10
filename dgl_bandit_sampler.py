@@ -28,7 +28,7 @@ def normalized_edata(g, weight=None):
 
 class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.1, num_steps=5000,
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
                  allow_zero_in_degree=False, model='sage'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
@@ -64,7 +64,6 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             DGLBlock: subgraph containing all the edges from the candidate nodes to the output nodes.
         """
         if self.importance_sampling:
-        
           # \sum_{k\in\mathcal{N}_i}q_{ik}, calc sum of q_ij over j (to get i sum)
           weight_sum = dgl.ops.copy_e_sum(insg, weight)
           # reverse the edges (top-down)
@@ -143,10 +142,10 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # \frac{w_{ij}}{exp3_weights_sum}, divide exp_weights over exp_weights_sum
         exp_weights_divided = dgl.ops.e_div_v(insg, exp_weights, exp3_weights_sum)
         # number of edges incoming to the seed node (degree)
-        k = g.in_degrees(insg.ndata[dgl.NID])
+        n_i = g.in_degrees(insg.ndata[dgl.NID])
         # update edge prob 
         # (1 - \eta) {exp_weights_divided} + \frac{\eta}{k}
-        edge_prob = dgl.ops.v_add_e(insg, (self.eta / k), (1 - self.eta) * (exp_weights_divided)) 
+        edge_prob = dgl.ops.v_add_e(insg, (self.eta / n_i), (1 - self.eta) * (exp_weights_divided)) 
         return edge_prob, insg
     
     def calculate_alpha(self, mfg):
@@ -196,23 +195,22 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         Returns:
             DGLBlock: the mfgs after adding reward for each edge to each of mfgs 
         """
-        # k is number of nodes in the subgraph (sample size or number of arms)
-        k = g.in_degrees()[mfg.srcdata[dgl.NID].long()]
-        k = k[k>0]
+        # n_i is number of nodes in the subgraph (sample size or number of arms)
+        n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
         # calculate \|h_j\| (node embedding norm)
         h_j_norm = mfg.srcdata['embed_norm']
         # node prob
-        q = mfg.srcdata[self.node_prob]
-        # \frac{\alpha_{ij}^2}{k}
-        alpha_div_k = dgl.ops.e_div_v(mfg, alpha**2, k)
-        # \frac{\|h_j\|_2^2}{q_j^2}
-        h_j_norm_div_q_j = h_j_norm ** 2 / q ** 2
+        # q = mfg.srcdata[self.node_prob]
+        q_ij = mfg.edata['q_ij']
+        # \frac{\alpha_{ij}^2}{n_i}
+        alpha_div_k = dgl.ops.e_div_v(mfg, alpha**2, n_i)
+        # \frac{\|h_j\|_2^2}{q_{ij}^2}
+        h_j_norm_div_q_j = dgl.ops.u_div_e(mfg, h_j_norm ** 2, q_ij ** 2)
         # \frac{\alpha_{ij}^2}{k\cdot q_j^2} \|h_j\|_2^2, calculate rewards
-        rewards = dgl.ops.e_mul_u(mfg, alpha_div_k, h_j_norm_div_q_j)
+        rewards = alpha_div_k * h_j_norm_div_q_j
         # store rewrds inside the block data
         mfg.edata['rewards'] = rewards
         
-    
     def update_exp3_weights(self, idx, mfg, g):
         r"""
         Update the exp3 weights of each edge being selected using the rewards obtained
@@ -239,16 +237,17 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             mfgs (DGLBlock): the blocks (in top-down format) to compute exp3 edge weight for
         """
         # Number of nodes to select in each iteration (sample size or number of arms).
-        n = g.number_of_nodes()
+        k_i = mfg.out_degrees()
+        print('k_i', k_i)
         # Number of nodes in the current subgraph (neigbor of a node or degree)
-        k = g.in_degrees()[mfg.srcdata[dgl.NID].long()]
-        k = k[k>0]
+        n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
 
         # Calculate the delta value for exp3
         # delta: \sqrt{\frac{(1 - \eta) \eta^4 k^5 \ln(\frac{n}{k})}{T n^4}}
-        # delta = torch.sqrt(((1-self.eta)*(self.eta**4)*(k**5)*torch.log(n/k))/(self.T*n**4))*100
-        # print('delta', delta, delta.shape)
-        delta = self.eta
+        delta = torch.sqrt(((1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i))/(self.T*n_i**4))
+        print('delta', delta, delta.shape)
+        # delta = self.eta
+        # delta = 0.01
 
         # The rewards obtained for each node in the previous iteration
         rewards = mfg.edata['rewards'].clone().detach()
@@ -257,7 +256,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # \hat{r}_{ij} = \frac{r_{ij}}{p_i}, Compute rewards_hat by dividing rewards by node probabilities
         rewards_hat = dgl.ops.e_div_u(mfg, rewards, prob)
         # \frac{\delta \hat{r}_{ij}}{k p_i}, compute delta_reward for edges
-        delta_reward = dgl.ops.e_mul_v(mfg, rewards_hat, delta / k)
+        delta_reward = dgl.ops.e_mul_v(mfg, rewards_hat, delta / n_i)
         # limit delta_reward to 1
         delta_reward[delta_reward > 1] = 1
         # \exp(\frac{\delta \hat{r}_{ij}}{k p_i}), take exp of delta_reward
@@ -343,7 +342,6 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # update the edge data with W_tilde
         block.edata[self.output_weight] = W_tilde
         # add edge prob
-        # TODO: Remove
         block.edata['q_ij'] = W
         # add node prob
         block.srcdata[self.node_prob] = P
