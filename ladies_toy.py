@@ -157,3 +157,65 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
             seed_nodes = block.srcdata[dgl.NID]
             blocks.insert(0, block)
         return seed_nodes, output_nodes, blocks
+    
+class PoissonLadiesSampler(LadiesSampler):
+    def __init__(
+        self,
+        nodes_per_layer,
+        importance_sampling=True,
+        weight="w",
+        out_weight="edge_weights",
+        skip=False,
+    ):
+        super().__init__(
+            nodes_per_layer, importance_sampling, weight, out_weight
+        )
+        self.eps = 0.9999
+        self.skip = skip
+
+    def compute_prob(self, g, seed_nodes, weight, num):
+        """
+        g : the whole graph
+        seed_nodes : the output nodes for the current layer
+        weight : the weight of the edges
+        return : the unnormalized probability of the candidate nodes, as well as the subgraph
+                 containing all the edges from the candidate nodes to the output nodes.
+        """
+        prob, insg = super().compute_prob(g, seed_nodes, weight, num)
+
+        one = torch.ones_like(prob)
+        if prob.shape[0] <= num:
+            return one, insg
+
+        c = 1.0
+        for i in range(50):
+            S = torch.sum(torch.minimum(prob * c, one).to(torch.float64)).item()
+            if min(S, num) / max(S, num) >= self.eps:
+                break
+            else:
+                c *= num / S
+
+        if self.skip:
+            skip_nodes = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
+            prob[skip_nodes] = float("inf")
+
+        return torch.minimum(prob * c, one), insg
+
+    def select_neighbors(self, prob, num):
+        """
+        seed_nodes : output nodes
+        cand_nodes : candidate nodes.  Must contain all output nodes in @seed_nodes
+        prob : unnormalized probability of each candidate node
+        num : number of neighbors to sample
+        return : the set of input nodes in terms of their indices in @cand_nodes, and also the indices of
+                 seed nodes in the selected nodes.
+        """
+        # The returned nodes should be a union of seed_nodes plus @num nodes from cand_nodes.
+        # Because compute_prob returns a compacted subgraph and a list of probabilities,
+        # we need to find the corresponding local IDs of the resulting union in the subgraph
+        # so that we can compute the edge weights of the block.
+        # This is why we need a find_indices_in() function.
+        neighbor_nodes_idx = torch.arange(prob.shape[0], device=prob.device)[
+            torch.bernoulli(prob) == 1
+        ]
+        return neighbor_nodes_idx
