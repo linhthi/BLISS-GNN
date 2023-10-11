@@ -46,11 +46,12 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         self.eps = 0.9999
         self.converge = []
     
-    def compute_prob(self, insg, weight, num):
+    def compute_prob(self, insg, edge_prob, num):
         r"""
         Args:
             insg (DGLGraph): subgraph of the seed nodes graph
-            weight (Tensor): the weight of the edges
+            edge_prob (Tensor): the edge probability
+            num : number of neighbors to sample
 
         STEP_02    
 
@@ -65,13 +66,13 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         """
         if self.importance_sampling:
           # \sum_{k\in\mathcal{N}_i}q_{ik}, calc sum of q_ij over j (to get i sum)
-          weight_sum = dgl.ops.copy_e_sum(insg, weight)
+          edge_prob_sum = dgl.ops.copy_e_sum(insg, edge_prob)
           # reverse the edges (top-down)
           out_frontier = dgl.reverse(insg, copy_edata=True)
           # \frac{q_{ij}}{weight_sum}
-          weight_div_sum = dgl.ops.e_div_u(out_frontier, weight, weight_sum)          
+          edge_prob_div_sum = dgl.ops.e_div_u(out_frontier, edge_prob, edge_prob_sum)          
           # \sum_{i} (weight_div_sum)^2, prob for each node
-          prob = dgl.ops.copy_e_sum(out_frontier, weight_div_sum ** 2)
+          prob = dgl.ops.copy_e_sum(out_frontier, edge_prob_div_sum ** 2)
           # \sqrt{prob}, take the square root to follow the importance sampling equation
           prob = torch.sqrt(prob)
         else:
@@ -117,10 +118,10 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         STEP_01
 
         Equation:
-        q_{ij} = (1 - \eta) \frac{w_{ij}}{\sum_{j} w_{ij}} + \frac{\eta}{k}
+        q_{ij} = (1 - \eta) \frac{w_{ij}}{\sum_{j} w_{ij}} + \frac{\eta}{n_i}
             - q_ij is the probability of selecting edge ij
             - η (eta) is the learning rate
-            - k is the number of edges incoming to the seed node (degree)
+            - n_i is the number of edges incoming to the seed node (degree) or the number neighbors of the node i
             - w_ij is the exp3 weight of edge ij
 
         Args:
@@ -203,11 +204,11 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # q = mfg.srcdata[self.node_prob]
         q_ij = mfg.edata['q_ij']
         # \frac{\alpha_{ij}^2}{n_i}
-        alpha_div_k = dgl.ops.e_div_v(mfg, alpha**2, n_i)
+        alpha_div_n_i = dgl.ops.e_div_v(mfg, alpha**2, n_i)
         # \frac{\|h_j\|_2^2}{q_{ij}^2}
         h_j_norm_div_q_j = dgl.ops.u_div_e(mfg, h_j_norm ** 2, q_ij ** 2)
         # \frac{\alpha_{ij}^2}{k\cdot q_j^2} \|h_j\|_2^2, calculate rewards
-        rewards = alpha_div_k * h_j_norm_div_q_j
+        rewards = alpha_div_n_i * h_j_norm_div_q_j
         # store rewrds inside the block data
         mfg.edata['rewards'] = rewards
         
@@ -219,9 +220,9 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         STEP_07
 
         Equation:
-        w_{ij} = w_{ij} \exp(\frac{\delta r_{ij}}{k p_i})
+        w_{ij} = w_{ij} \exp(\frac{\delta r_{ij}}{n_i p_i})
             - w_ij is the exp3 weight of edge ij
-            - n is the number of neighbors of the node at the end of edge i (degree)
+            - n_i is the number of neighbors of the node at the end of edge i (degree)
             - r_ij is the reward obtained for selecting edge ij in the previous iteration
             - p_i is the probability of selecting a node i in the previous iteration
             - δ (delta) is the learning rate
