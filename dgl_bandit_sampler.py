@@ -26,9 +26,9 @@ def normalized_edata(g, weight=None):
         g.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
         return g.edata['w'] * g.edata[weight]
 
-class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
+class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.05, num_steps=5000,
                  allow_zero_in_degree=False, model='sage'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
@@ -43,8 +43,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         self.exp3_weights = None
         self.allow_zero_in_degree = allow_zero_in_degree
         self.model = model
-        self.eps = 0.9999
-        self.converge = []
+        self.converge = [[] for _ in range(len(self.nodes_per_layer))]
     
     def compute_prob(self, insg, edge_prob, num):
         r"""
@@ -80,18 +79,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
           prob = torch.ones(insg.num_nodes())
           # set the non neighboring nodes to 0
           prob[insg.out_degrees() == 0] = 0
-  
-        one = torch.ones_like(prob)
-        if prob.shape[0] <= num:
-            return one, insg
-        c = 1.0
-        for i in range(50):
-            S = torch.sum(torch.minimum(prob * c, one).to(torch.float64)).item()
-            if min(S, num) / max(S, num) >= self.eps:
-                break
-            else:
-                c *= num / S
-        return torch.minimum(prob * c, one)
+        return prob
     
     def select_neighbors(self, prob, num):
         """
@@ -107,8 +95,7 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
         # we need to find the corresponding local IDs of the resulting union in the subgraph
         # so that we can compute the edge weights of the block.
         # This is why we need a find_indices_in() function.
-        neighbor_nodes_idx = torch.arange(
-            prob.shape[0], device=prob.device)[torch.bernoulli(prob) == 1]
+        neighbor_nodes_idx = torch.multinomial(prob, min(num, prob.shape[0]), replacement=self.replace)
         return neighbor_nodes_idx
 
     def exp3_probabilities(self, idx, g, seed_nodes):
@@ -159,7 +146,6 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             # alpha
             alpha = mfg.edata[self.edge_weight]
         elif self.model == 'gat':
-            # TODO: Use q_j
             # # print('len nodes', mfg.srcdata['labels'].shape)
             q_ij = mfg.edata['q_ij']
             # # print('q_ij', q_ij, q_ij.shape)
@@ -245,9 +231,9 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
 
         # Calculate the delta value for exp3
         # delta: \sqrt{\frac{(1 - \eta) \eta^4 k^5 \ln(\frac{n}{k})}{T n^4}}
-        delta = torch.sqrt(((1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i))/(self.T*n_i**4))
-        print('delta', delta, delta.shape)
-        # delta = self.eta
+        # delta = torch.sqrt(((1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i))/(self.T*n_i**4))
+        # print('delta', delta, delta.shape)
+        delta = self.eta
         # delta = 0.01
 
         # The rewards obtained for each node in the previous iteration
@@ -376,21 +362,75 @@ class BanditSampler(dgl.dataloading.BlockSampler): # consider to use unbiased no
             # calc exp3_prob, 1 / N_i
             edge_prob, insg = self.exp3_probabilities(block_id, g, seed_nodes)
             print('exp3_prob', edge_prob, edge_prob.shape)
-            self.converge.append(edge_prob.tolist())
+            self.converge[block_id].append(edge_prob.tolist())
             # run compute_prob to get the unnormalized prob and subgraph
             node_prob = self.compute_prob(insg, edge_prob, num_nodes_to_sample)
-            print('node_prob', node_prob, node_prob.shape)
+            print('node_prob', node_prob, )
             # get the edge prob from the original graph (exp3)
             W = edge_prob
             # sample the best n neighbor nodes from given the probabilities of neighbors (and the current nodes)
             chosen_nodes = self.select_neighbors(node_prob, num_nodes_to_sample)
-            # output_nodes = chosen_nodes #>>>>>>>
             print('chosen_nodes', chosen_nodes, chosen_nodes.shape)
             # generate block for the sampled nodes and the previous nodes
             block = self.generate_block(insg, chosen_nodes.type(g.idtype), seed_nodes.type(g.idtype), node_prob, W)
             # update the seed_nodes with the sampled neighbors nodes to sample another block foe them in the next iteration
             seed_nodes = block.srcdata[dgl.NID] # <=======
-            # # print('seed_nodes', seed_nodes, seed_nodes.shape)
+            # print('seed_nodes', seed_nodes, seed_nodes.shape)
             # add blocks at the beginning of blocks list (top-down)
             blocks.insert(0, block)
         return seed_nodes, output_nodes, blocks
+
+class PoissonBanditLadiesSampler(BanditLadiesSampler):
+    def __init__(
+        self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
+        node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.1, num_steps=5000,
+        allow_zero_in_degree=False, model='sage'
+    ):
+        super().__init__(
+            nodes_per_layer, importance_sampling, weight, out_weight,
+            node_embedding, node_prob, replace, eta, num_steps,
+            allow_zero_in_degree, model)
+        self.eps = 0.9999
+
+    def compute_prob(self, insg, edge_prob, num):
+        """
+        g : the whole graph
+        seed_nodes : the output nodes for the current layer
+        weight : the weight of the edges
+        return : the unnormalized probability of the candidate nodes, as well as the subgraph
+                 containing all the edges from the candidate nodes to the output nodes.
+        """
+        prob = super().compute_prob(insg, edge_prob, num)
+
+        one = torch.ones_like(prob)
+        if prob.shape[0] <= num:
+            return one
+
+        c = 1.0
+        for i in range(50):
+            S = torch.sum(torch.minimum(prob * c, one).to(torch.float64)).item()
+            if min(S, num) / max(S, num) >= self.eps:
+                break
+            else:
+                c *= num / S
+
+        return torch.minimum(prob * c, one)
+
+    def select_neighbors(self, prob, num):
+        """
+        seed_nodes : output nodes
+        cand_nodes : candidate nodes.  Must contain all output nodes in @seed_nodes
+        prob : unnormalized probability of each candidate node
+        num : number of neighbors to sample
+        return : the set of input nodes in terms of their indices in @cand_nodes, and also the indices of
+                 seed nodes in the selected nodes.
+        """
+        # The returned nodes should be a union of seed_nodes plus @num nodes from cand_nodes.
+        # Because compute_prob returns a compacted subgraph and a list of probabilities,
+        # we need to find the corresponding local IDs of the resulting union in the subgraph
+        # so that we can compute the edge weights of the block.
+        # This is why we need a find_indices_in() function.
+        neighbor_nodes_idx = torch.arange(prob.shape[0], device=prob.device)[
+            torch.bernoulli(prob) == 1
+        ]
+        return neighbor_nodes_idx

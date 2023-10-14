@@ -39,6 +39,7 @@ import time
 import math
 import itertools
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 th.set_printoptions(profile="full")
@@ -97,8 +98,7 @@ class ModelLightning(LightningModule):
             self.loss_fn = nn.NLLLoss() if not multilabel else nn.BCELoss()
         elif self.model == 'gat':
             self.loss_fn = nn.CrossEntropyLoss() if not multilabel else nn.BCELoss()
-        self.final_activation = nn.LogSoftmax(
-            dim=1) if not multilabel else nn.Sigmoid()
+        self.final_activation = nn.LogSoftmax(dim=1) if not multilabel else nn.Sigmoid()
         self.pt = 0
 
     def num_sampled_nodes(self, i):
@@ -204,10 +204,10 @@ class DataModule(LightningDataModule):
             sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
             # , prefetch_node_feats='features', prefetch_labels='labels')
         elif 'bandit' in sampler:
-            # [?] should be normalized?
             g.edata['w'] = normalized_edata(g, weight='weight')
-            sampler = BanditSampler(fanouts, node_embedding='features', num_steps=self.num_steps,
-                                    allow_zero_in_degree=allow_zero_in_degree, model=model)
+            sampler = (PoissonBanditLadiesSampler if 'p' in sampler else BanditLadiesSampler)(
+                fanouts, node_embedding='features', num_steps=self.num_steps,
+                allow_zero_in_degree=allow_zero_in_degree, model=model)
         elif 'ladies' in sampler:
             # g.edata['w'] = normalized_edata(g)
             g.edata['w'] = normalized_edata(g, weight='weight')
@@ -341,6 +341,13 @@ class BatchSizeCallback(Callback):
         if 'bandit' in trainer.datamodule.sampler_name:
             # calculate reward, update exp3 weights and update exp3 probabilities
             trainer.datamodule.sampler.exp3(mfgs, trainer.datamodule.g)
+            # update values
+            # trainer.datamodule.g.edata['w'] = torch.FloatTensor(
+            #     [self.inc_sin_0[trainer.global_step-1],
+            #      self.dec_sin_1[trainer.global_step-1],
+            #      self.inc_sin_2[trainer.global_step-1],
+            #      self.dec_sin_3[trainer.global_step-1]]).to(device=trainer.datamodule.g.device)
+
 
     def on_train_epoch_end(self, trainer, datamodule):
         if 'bandit' in trainer.datamodule.sampler_name:
@@ -367,15 +374,34 @@ class BatchSizeCallback(Callback):
             trainer.reset_val_dataloader()
             self.clear()
 
+    def on_train_start(self, trainer, datamodule):
+        r = 1
+        t = 2 * np.pi * r
+        fs = trainer.datamodule.num_steps / t
+        self.inc_sin_0 = 0.5*np.sin((np.arange(t * fs) / fs))+0.5
+        self.dec_sin_1 = 0.5*np.sin(-(np.arange(t * fs) / fs))+0.5
+        self.inc_sin_2 = 0.5*np.sin(-(np.arange(t * fs) / fs) + (0.3-0.7))+0.5
+        self.dec_sin_3 = 0.5*np.sin((np.arange(t * fs) / fs) + (0.7-0.3))+0.5
+
     def on_train_end(self, trainer, datamodule):
         if 'bandit' in trainer.datamodule.sampler_name:
-            y = trainer.datamodule.sampler.converge
-            x = range(0, len(y))
-            for i in range(len(y[0])):
-                plt.plot(x,[pt[i] for pt in y], label = 'edge_%s'%i)
-            plt.grid()
-            plt.legend()
+            for layer_id in range(len(trainer.datamodule.sampler.converge)):
+                y = trainer.datamodule.sampler.converge[layer_id]
+                x = range(0, len(y))
+                f1 = plt.figure(layer_id)
+                for i in range(len(y[0])):
+                    plt.plot(x,[pt[i] for pt in y], label = 'edge_%s'%i)
+                plt.grid()
+                plt.legend()
+            # f2 = plt.figure(2)
+            # plt.plot(self.inc_sin_0, label='edge_0')
+            # plt.plot(self.dec_sin_1, label='edge_1')
+            # plt.plot(self.inc_sin_2, label='edge_2')
+            # plt.plot(self.dec_sin_3, label='edge_3')
+            # plt.grid()
+            # plt.legend()
             plt.show(block=True)
+
         elif 'ladies' in trainer.datamodule.sampler_name:
             y = trainer.datamodule.sampler.converge
 
