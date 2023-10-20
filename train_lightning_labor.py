@@ -368,9 +368,9 @@ class BatchSizeCallback(Callback):
 
 
     def on_train_epoch_end(self, trainer, datamodule):
-        if 'bandit' in trainer.datamodule.sampler_name:
+        # if 'bandit' in trainer.datamodule.sampler_name:
             # calculate reward, update exp3 weights and update exp3 probabilities
-            print('weight_max',trainer.datamodule.sampler.exp3_weights)  # .topk(k=10, dim=1))
+            # print('weight_max',trainer.datamodule.sampler.exp3_weights)  # .topk(k=10, dim=1))
             # print('converge',trainer.datamodule.sampler.converge, len(trainer.datamodule.sampler.converge))  # .topk(k=10, dim=1))
             # print('weight_min', trainer.datamodule.sampler.exp3_weights.min(1))
 
@@ -383,7 +383,6 @@ class BatchSizeCallback(Callback):
         #         print('global_step', (trainer.global_step / trainer.datamodule.num_steps), trainer.datamodule.num_steps, trainer.global_step)
         #         print('trainer.datamodule.g.edata', trainer.datamodule.g.edata['w'])
         #         trainer.datamodule.g.edata['w'] = torch.FloatTensor([0.7, 0.3, 0.6, 0.4]).to(device=trainer.datamodule.g.device)
-
 
         if self.limit > 0 and self.n >= 2 and abs(self.limit - self.m) * self.n >= self.std * self.factor:
             trainer.datamodule.batch_size = int(
@@ -478,8 +477,8 @@ if __name__ == '__main__':
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument('--model', type=str, default='sage')
     argparser.add_argument('--dataset', type=str, default='cora')
-    argparse.add_argument('--eta', type=float, default=0.1)
-    argparse.add_argument('--delta', type=float, default=0.1)
+    argparser.add_argument('--eta', type=float, default=0.1)
+    argparser.add_argument('--delta', type=float, default=0.1)
     argparser.add_argument('--num-epochs', type=int, default=-1)
     argparser.add_argument('--num-steps', type=int, default=5000)
     argparser.add_argument('--num-hidden', type=int, default=64)

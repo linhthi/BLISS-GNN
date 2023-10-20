@@ -226,7 +226,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         """
         # Number of nodes to select in each iteration (sample size or number of arms).
         k_i = mfg.out_degrees()
-        print('k_i', k_i)
+        # print('k_i', k_i)
         # Number of nodes in the current subgraph (neigbor of a node or degree)
         n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
 
@@ -362,16 +362,16 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             num_nodes_to_sample = self.nodes_per_layer[block_id]
             # calc exp3_prob, 1 / N_i
             edge_prob, insg = self.exp3_probabilities(block_id, g, seed_nodes)
-            print('exp3_prob', edge_prob, edge_prob.shape)
+            # print('exp3_prob', edge_prob, edge_prob.shape)
             self.converge[block_id].append(edge_prob.tolist())
             # run compute_prob to get the unnormalized prob and subgraph
             node_prob = self.compute_prob(insg, edge_prob, num_nodes_to_sample)
-            print('node_prob', node_prob, )
+            # print('node_prob', node_prob, )
             # get the edge prob from the original graph (exp3)
             W = edge_prob
             # sample the best n neighbor nodes from given the probabilities of neighbors (and the current nodes)
             chosen_nodes = self.select_neighbors(node_prob, num_nodes_to_sample)
-            print('chosen_nodes', chosen_nodes, chosen_nodes.shape)
+            # print('chosen_nodes', chosen_nodes, chosen_nodes.shape)
             # generate block for the sampled nodes and the previous nodes
             block = self.generate_block(insg, chosen_nodes.type(g.idtype), seed_nodes.type(g.idtype), node_prob, W)
             # update the seed_nodes with the sampled neighbors nodes to sample another block foe them in the next iteration
