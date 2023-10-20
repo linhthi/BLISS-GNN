@@ -157,6 +157,7 @@ class GATv2(nn.Module):
         return h
     
     # L310 in gatv2conv add l2 norm.
+    # TODO: Update inference function
     def inference(self, g, x, device, batch_size, num_workers):
         """
         Inference with the GATv2 model on full neighbors (i.e. without neighbor sampling).
@@ -240,8 +241,8 @@ class SAGE(nn.Module):
                 h = self.activation(h)
                 h = self.dropout(h)
         return h
-
-    def inference(self, g, x, device, batch_size, num_workers):
+    
+    def inference(self, g, device, batch_size, use_uva, num_workers):
         """
         Inference with the GraphSAGE model on full neighbors (i.e. without neighbor sampling).
         g : the entire graph.
@@ -250,42 +251,47 @@ class SAGE(nn.Module):
         The inference code is written in a fashion that it could handle any number of nodes and
         layers.
         """
-        # During inference with sampling, multi-layer blocks are very inefficient because
-        # lots of computations in the first few layers are repeated.
-        # Therefore, we compute the representation of all nodes layer by layer.  The nodes
-        # on each layer are of course splitted in batches.
-        # TODO: can we standardize this?
+        # The difference between this inference function and the one in the official
+        # example is that the intermediate results can also benefit from prefetching.
+        g.ndata["h"] = g.ndata["features"]
+        sampler = dgl.dataloading.MultiLayerFullNeighborSampler(
+            1, prefetch_node_feats=["h"]
+        )
+        pin_memory = g.device != device and use_uva
+        dataloader = dgl.dataloading.DataLoader(
+            g,
+            th.arange(g.num_nodes(), dtype=g.idtype, device=g.device),
+            sampler,
+            device=device,
+            batch_size=batch_size,
+            shuffle=False,
+            drop_last=False,
+            use_uva=use_uva,
+            num_workers=num_workers,
+            persistent_workers=(num_workers > 0),
+        )
+
+        self.eval()
+
         for l, layer in enumerate(self.layers):
-            y = th.zeros(
+            y = th.empty(
                 g.num_nodes(),
                 self.n_hidden if l != len(self.layers) - 1 else self.n_classes,
+                dtype=g.ndata["h"].dtype,
+                device=g.device,
+                pin_memory=pin_memory,
             )
-
-            sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
-            dataloader = dgl.dataloading.DataLoader(
-                g,
-                th.arange(g.num_nodes(), dtype=g.idtype, device=g.device),
-                sampler,
-                device=device if num_workers == 0 else None,
-                batch_size=batch_size,
-                shuffle=False,
-                drop_last=False,
-                num_workers=num_workers,
-            )
-
             for input_nodes, output_nodes, blocks in tqdm.tqdm(dataloader):
-                block = blocks[0]
-
-                block = block.int().to(device)
-                h = x[input_nodes.to(x.device, th.int64)].to(device)
-                h = layer(block, h)
-                if l != len(self.layers) - 1:
+                x = blocks[0].srcdata["h"]
+                h = layer(blocks[0], x)
+                if l < len(self.layers) - 1:
                     h = self.activation(h)
                     h = self.dropout(h)
-
-                y[output_nodes.long()] = h.cpu()
-
-            x = y
+                # by design, our output nodes are contiguous
+                y[output_nodes[0].item() : output_nodes[-1].item() + 1] = h.to(
+                    y.device
+                )
+            g.ndata["h"] = y
         return y
 
 

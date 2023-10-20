@@ -20,7 +20,7 @@
 #  */
 
 from ladies_toy import LadiesSampler, PoissonLadiesSampler
-from dgl_bandit_sampler import *
+from bandit_sampler import *
 from model import SAGE, GATv2
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning import LightningDataModule, LightningModule, Trainer, seed_everything
@@ -204,7 +204,7 @@ class DataModule(LightningDataModule):
             sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
             # , prefetch_node_feats='features', prefetch_labels='labels')
         elif 'bandit' in sampler:
-            g.edata['w'] = normalized_edata(g, weight='weight')
+            g.edata['w'] = normalized_edata(g)
             sampler = (PoissonBanditLadiesSampler if 'p' in sampler else BanditLadiesSampler)(
                 fanouts, node_embedding='features', num_steps=self.num_steps,
                 allow_zero_in_degree=allow_zero_in_degree, model=model)
@@ -350,9 +350,9 @@ class BatchSizeCallback(Callback):
 
 
     def on_train_epoch_end(self, trainer, datamodule):
-        if 'bandit' in trainer.datamodule.sampler_name:
+        # if 'bandit' in trainer.datamodule.sampler_name:
             # calculate reward, update exp3 weights and update exp3 probabilities
-            print('weight_max',trainer.datamodule.sampler.exp3_weights)  # .topk(k=10, dim=1))
+            # print('weight_max',trainer.datamodule.sampler.exp3_weights)  # .topk(k=10, dim=1))
             # print('converge',trainer.datamodule.sampler.converge, len(trainer.datamodule.sampler.converge))  # .topk(k=10, dim=1))
             # print('weight_min', trainer.datamodule.sampler.exp3_weights.min(1))
 
@@ -374,45 +374,45 @@ class BatchSizeCallback(Callback):
             trainer.reset_val_dataloader()
             self.clear()
 
-    def on_train_start(self, trainer, datamodule):
-        r = 1
-        t = 2 * np.pi * r
-        fs = trainer.datamodule.num_steps / t
-        self.inc_sin_0 = 0.5*np.sin((np.arange(t * fs) / fs))+0.5
-        self.dec_sin_1 = 0.5*np.sin(-(np.arange(t * fs) / fs))+0.5
-        self.inc_sin_2 = 0.5*np.sin(-(np.arange(t * fs) / fs) + (0.3-0.7))+0.5
-        self.dec_sin_3 = 0.5*np.sin((np.arange(t * fs) / fs) + (0.7-0.3))+0.5
+    # def on_train_start(self, trainer, datamodule):
+    #     r = 1
+    #     t = 2 * np.pi * r
+    #     fs = trainer.datamodule.num_steps / t
+    #     self.inc_sin_0 = 0.5*np.sin((np.arange(t * fs) / fs))+0.5
+    #     self.dec_sin_1 = 0.5*np.sin(-(np.arange(t * fs) / fs))+0.5
+    #     self.inc_sin_2 = 0.5*np.sin(-(np.arange(t * fs) / fs) + (0.3-0.7))+0.5
+    #     self.dec_sin_3 = 0.5*np.sin((np.arange(t * fs) / fs) + (0.7-0.3))+0.5
 
-    def on_train_end(self, trainer, datamodule):
-        if 'bandit' in trainer.datamodule.sampler_name:
-            for layer_id in range(len(trainer.datamodule.sampler.converge)):
-                y = trainer.datamodule.sampler.converge[layer_id]
-                x = range(0, len(y))
-                f1 = plt.figure(layer_id)
-                for i in range(len(y[0])):
-                    plt.plot(x,[pt[i] for pt in y], label = 'edge_%s'%i)
-                plt.grid()
-                plt.legend()
-            # f2 = plt.figure(2)
-            # plt.plot(self.inc_sin_0, label='edge_0')
-            # plt.plot(self.dec_sin_1, label='edge_1')
-            # plt.plot(self.inc_sin_2, label='edge_2')
-            # plt.plot(self.dec_sin_3, label='edge_3')
-            # plt.grid()
-            # plt.legend()
-            plt.show(block=True)
+    # def on_train_end(self, trainer, datamodule):
+    #     if 'bandit' in trainer.datamodule.sampler_name:
+    #         for layer_id in range(len(trainer.datamodule.sampler.converge)):
+    #             y = trainer.datamodule.sampler.converge[layer_id]
+    #             x = range(0, len(y))
+    #             f1 = plt.figure(layer_id)
+    #             for i in range(len(y[0])):
+    #                 plt.plot(x,[pt[i] for pt in y], label = 'edge_%s'%i)
+    #             plt.grid()
+    #             plt.legend()
+    #         # f2 = plt.figure(2)
+    #         # plt.plot(self.inc_sin_0, label='edge_0')
+    #         # plt.plot(self.dec_sin_1, label='edge_1')
+    #         # plt.plot(self.inc_sin_2, label='edge_2')
+    #         # plt.plot(self.dec_sin_3, label='edge_3')
+    #         # plt.grid()
+    #         # plt.legend()
+    #         plt.show(block=True)
 
-        elif 'ladies' in trainer.datamodule.sampler_name:
-            y = trainer.datamodule.sampler.converge
+    #     elif 'ladies' in trainer.datamodule.sampler_name:
+    #         y = trainer.datamodule.sampler.converge
 
-            # w = y.unique(return_counts=True)[1]/len(y)
-            print(y[-1], [i/sum(y[-1]) for i in y[-1]])
-            x = range(0, len(y))
-            for i in range(len(y[0])):
-                plt.plot(x,[pt[i]/sum(pt) for pt in y], label = 'edge_%s'%i)
-            plt.grid()
-            plt.legend()
-            plt.show(block=True)
+    #         # w = y.unique(return_counts=True)[1]/len(y)
+    #         print(y[-1], [i/sum(y[-1]) for i in y[-1]])
+    #         x = range(0, len(y))
+    #         for i in range(len(y[0])):
+    #             plt.plot(x,[pt[i]/sum(pt) for pt in y], label = 'edge_%s'%i)
+    #         plt.grid()
+    #         plt.legend()
+    #         plt.show(block=True)
 
 def evaluate(model, g, n_classes, multilabel, val_nid, device, softmax=True):
     """

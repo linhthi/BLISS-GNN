@@ -28,7 +28,7 @@ def normalized_edata(g, weight=None):
 
 class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.05, num_steps=5000,
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
                  allow_zero_in_degree=False, model='sage'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
@@ -43,7 +43,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         self.exp3_weights = None
         self.allow_zero_in_degree = allow_zero_in_degree
         self.model = model
-        self.converge = [[] for _ in range(len(self.nodes_per_layer))]
+        # self.converge = [[] for _ in range(len(self.nodes_per_layer))]
     
     def compute_prob(self, insg, edge_prob, num):
         r"""
@@ -225,7 +225,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         """
         # Number of nodes to select in each iteration (sample size or number of arms).
         k_i = mfg.out_degrees()
-        print('k_i', k_i)
+        # print('k_i', k_i)
         # Number of nodes in the current subgraph (neigbor of a node or degree)
         n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
 
@@ -233,7 +233,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # delta: \sqrt{\frac{(1 - \eta) \eta^4 k^5 \ln(\frac{n}{k})}{T n^4}}
         # delta = torch.sqrt(((1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i))/(self.T*n_i**4))
         # print('delta', delta, delta.shape)
-        delta = self.eta
+        delta = self.eta / 10
         # delta = 0.01
 
         # The rewards obtained for each node in the previous iteration
@@ -349,8 +349,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
           self.exp3_weights = torch.ones(len(self.nodes_per_layer), g.num_edges()).to(g.device)
         
         # convert seed_nodes IDs to tensor
-        # seed_nodes = torch.tensor(seed_nodes) # <==============
-        seed_nodes = torch.tensor([0, 1], dtype=torch.int32).to(g.device)
+        # seed_nodes = torch.tensor(seed_nodes)
         # copy seed_nodes to output_nodes (seed_nodes will be updated, output_nodes not)
         output_nodes = seed_nodes
         # empty list 
@@ -361,21 +360,20 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             num_nodes_to_sample = self.nodes_per_layer[block_id]
             # calc exp3_prob, 1 / N_i
             edge_prob, insg = self.exp3_probabilities(block_id, g, seed_nodes)
-            print('exp3_prob', edge_prob, edge_prob.shape)
-            self.converge[block_id].append(edge_prob.tolist())
+            # print('exp3_prob', edge_prob, edge_prob.shape)
+            # self.converge[block_id].append(edge_prob.tolist())
             # run compute_prob to get the unnormalized prob and subgraph
             node_prob = self.compute_prob(insg, edge_prob, num_nodes_to_sample)
-            print('node_prob', node_prob, )
+            # print('node_prob', node_prob, )
             # get the edge prob from the original graph (exp3)
             W = edge_prob
             # sample the best n neighbor nodes from given the probabilities of neighbors (and the current nodes)
             chosen_nodes = self.select_neighbors(node_prob, num_nodes_to_sample)
-            print('chosen_nodes', chosen_nodes, chosen_nodes.shape)
+            # print('chosen_nodes', chosen_nodes, chosen_nodes.shape)
             # generate block for the sampled nodes and the previous nodes
             block = self.generate_block(insg, chosen_nodes.type(g.idtype), seed_nodes.type(g.idtype), node_prob, W)
             # update the seed_nodes with the sampled neighbors nodes to sample another block foe them in the next iteration
-            seed_nodes = block.srcdata[dgl.NID] # <=======
-            # print('seed_nodes', seed_nodes, seed_nodes.shape)
+            seed_nodes = block.srcdata[dgl.NID]
             # add blocks at the beginning of blocks list (top-down)
             blocks.insert(0, block)
         return seed_nodes, output_nodes, blocks
