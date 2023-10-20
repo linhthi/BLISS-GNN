@@ -19,7 +19,9 @@
 #  * \brief labor sampling example
 #  */
 
-from ladies_toy import LadiesSampler, PoissonLadiesSampler
+from pytorch_lightning.utilities.types import EVAL_DATALOADERS
+from ladies_toy import PoissonLadiesSampler
+from ladies import LadiesSampler
 from dgl_bandit_sampler import *
 from model import SAGE, GATv2
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -40,6 +42,8 @@ import math
 import itertools
 import matplotlib.pyplot as plt
 import numpy as np
+import yaml
+from torchmetrics.classification import MulticlassF1Score, MultilabelF1Score
 
 
 th.set_printoptions(profile="full")
@@ -100,6 +104,9 @@ class ModelLightning(LightningModule):
             self.loss_fn = nn.CrossEntropyLoss() if not multilabel else nn.BCELoss()
         self.final_activation = nn.LogSoftmax(dim=1) if not multilabel else nn.Sigmoid()
         self.pt = 0
+        self.f1score_class = lambda: (
+            MulticlassF1Score if not multilabel else MultilabelF1Score
+        )(n_classes, average="micro")
 
     def num_sampled_nodes(self, i):
         return self.cum_sampled_nodes[i] / self.num_steps if self.w >= 1 else self.cum_sampled_nodes[i] * (1 - self.w) / (1 - self.w ** self.num_steps)
@@ -204,13 +211,14 @@ class DataModule(LightningDataModule):
             sampler = dgl.dataloading.MultiLayerNeighborSampler(fanouts)
             # , prefetch_node_feats='features', prefetch_labels='labels')
         elif 'bandit' in sampler:
-            g.edata['w'] = normalized_edata(g, weight='weight')
+            # g.edata['w'] = normalized_edata(g, weight='weight')
+            g.edata['w'] = normalized_edata(g)
             sampler = (PoissonBanditLadiesSampler if 'p' in sampler else BanditLadiesSampler)(
                 fanouts, node_embedding='features', num_steps=self.num_steps,
                 allow_zero_in_degree=allow_zero_in_degree, model=model)
         elif 'ladies' in sampler:
-            # g.edata['w'] = normalized_edata(g)
-            g.edata['w'] = normalized_edata(g, weight='weight')
+            g.edata['w'] = normalized_edata(g)
+            # g.edata['w'] = normalized_edata(g, weight='weight')
 
             sampler = (PoissonLadiesSampler if 'poisson' in sampler else LadiesSampler)(
                 fanouts)
@@ -277,6 +285,16 @@ class DataModule(LightningDataModule):
         return dgl.dataloading.DataLoader(
             self.g,
             self.val_nid,
+            self.val_sampler,
+            device=self.device,
+            batch_size=self.batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=self.num_workers)
+    def test_dataloader(self):
+        return dgl.dataloading.DataLoader(
+            self.g,
+            self.test_nid,
             self.val_sampler,
             device=self.device,
             batch_size=self.batch_size,
@@ -374,45 +392,45 @@ class BatchSizeCallback(Callback):
             trainer.reset_val_dataloader()
             self.clear()
 
-    def on_train_start(self, trainer, datamodule):
-        r = 1
-        t = 2 * np.pi * r
-        fs = trainer.datamodule.num_steps / t
-        self.inc_sin_0 = 0.5*np.sin((np.arange(t * fs) / fs))+0.5
-        self.dec_sin_1 = 0.5*np.sin(-(np.arange(t * fs) / fs))+0.5
-        self.inc_sin_2 = 0.5*np.sin(-(np.arange(t * fs) / fs) + (0.3-0.7))+0.5
-        self.dec_sin_3 = 0.5*np.sin((np.arange(t * fs) / fs) + (0.7-0.3))+0.5
+    # def on_train_start(self, trainer, datamodule):
+    #     r = 1
+    #     t = 2 * np.pi * r
+    #     fs = trainer.datamodule.num_steps / t
+    #     self.inc_sin_0 = 0.5*np.sin((np.arange(t * fs) / fs))+0.5
+    #     self.dec_sin_1 = 0.5*np.sin(-(np.arange(t * fs) / fs))+0.5
+    #     self.inc_sin_2 = 0.5*np.sin(-(np.arange(t * fs) / fs) + (0.3-0.7))+0.5
+    #     self.dec_sin_3 = 0.5*np.sin((np.arange(t * fs) / fs) + (0.7-0.3))+0.5
 
-    def on_train_end(self, trainer, datamodule):
-        if 'bandit' in trainer.datamodule.sampler_name:
-            for layer_id in range(len(trainer.datamodule.sampler.converge)):
-                y = trainer.datamodule.sampler.converge[layer_id]
-                x = range(0, len(y))
-                f1 = plt.figure(layer_id)
-                for i in range(len(y[0])):
-                    plt.plot(x,[pt[i] for pt in y], label = 'edge_%s'%i)
-                plt.grid()
-                plt.legend()
-            # f2 = plt.figure(2)
-            # plt.plot(self.inc_sin_0, label='edge_0')
-            # plt.plot(self.dec_sin_1, label='edge_1')
-            # plt.plot(self.inc_sin_2, label='edge_2')
-            # plt.plot(self.dec_sin_3, label='edge_3')
-            # plt.grid()
-            # plt.legend()
-            plt.show(block=True)
+    # def on_train_end(self, trainer, datamodule):
+    #     if 'bandit' in trainer.datamodule.sampler_name:
+    #         for layer_id in range(len(trainer.datamodule.sampler.converge)):
+    #             y = trainer.datamodule.sampler.converge[layer_id]
+    #             x = range(0, len(y))
+    #             f1 = plt.figure(layer_id)
+    #             for i in range(len(y[0])):
+    #                 plt.plot(x,[pt[i] for pt in y], label = 'edge_%s'%i)
+    #             plt.grid()
+    #             plt.legend()
+    #         # f2 = plt.figure(2)
+    #         # plt.plot(self.inc_sin_0, label='edge_0')
+    #         # plt.plot(self.dec_sin_1, label='edge_1')
+    #         # plt.plot(self.inc_sin_2, label='edge_2')
+    #         # plt.plot(self.dec_sin_3, label='edge_3')
+    #         # plt.grid()
+    #         # plt.legend()
+    #         plt.show(block=True)
 
-        elif 'ladies' in trainer.datamodule.sampler_name:
-            y = trainer.datamodule.sampler.converge
+    #     elif 'ladies' in trainer.datamodule.sampler_name:
+    #         y = trainer.datamodule.sampler.converge
 
-            # w = y.unique(return_counts=True)[1]/len(y)
-            print(y[-1], [i/sum(y[-1]) for i in y[-1]])
-            x = range(0, len(y))
-            for i in range(len(y[0])):
-                plt.plot(x,[pt[i]/sum(pt) for pt in y], label = 'edge_%s'%i)
-            plt.grid()
-            plt.legend()
-            plt.show(block=True)
+    #         # w = y.unique(return_counts=True)[1]/len(y)
+    #         print(y[-1], [i/sum(y[-1]) for i in y[-1]])
+    #         x = range(0, len(y))
+    #         for i in range(len(y[0])):
+    #             plt.plot(x,[pt[i]/sum(pt) for pt in y], label = 'edge_%s'%i)
+    #         plt.grid()
+    #         plt.legend()
+    #         plt.show(block=True)
 
 def evaluate(model, g, n_classes, multilabel, val_nid, device, softmax=True):
     """
@@ -427,7 +445,7 @@ def evaluate(model, g, n_classes, multilabel, val_nid, device, softmax=True):
     with th.no_grad():
         pred = model.module.inference(
             g, nfeat, device, args.batch_size, args.num_workers)
-    model.train()
+    # model.val()
 
     if multilabel:
         test_acc = Accuracy(task="multilabel", num_labels=n_classes)
@@ -451,12 +469,17 @@ def evaluate(model, g, n_classes, multilabel, val_nid, device, softmax=True):
     return acc, f1
 
 
+
+
+
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--gpu', type=int, default=-1,
                            help="GPU device ID. Use -1 for CPU training")
     argparser.add_argument('--model', type=str, default='sage')
     argparser.add_argument('--dataset', type=str, default='cora')
+    argparse.add_argument('--eta', type=float, default=0.1)
+    argparse.add_argument('--delta', type=float, default=0.1)
     argparser.add_argument('--num-epochs', type=int, default=-1)
     argparser.add_argument('--num-steps', type=int, default=5000)
     argparser.add_argument('--num-hidden', type=int, default=64)
@@ -542,14 +565,36 @@ if __name__ == '__main__':
     print('Evaluating model in', logdir)
     ckpt = glob.glob(os.path.join(logdir, 'checkpoints', '*'))[0]
 
-    model = ModelLightning.load_from_checkpoint(
-        checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
+    from pytorch_lightning.utilities import AttributeDict
 
-    if args.model == 'sage':
-        softmax = True
-    elif args.model == 'gat':
-        softmax = False
-    test_acc, test_f1 = evaluate(model, datamodule.g, datamodule.n_classes,
-                                 datamodule.multilabel, datamodule.test_nid, device, softmax)
-    print('Test Accuracy:', test_acc)
-    print('Test F1:', test_f1)
+    # model = ModelLightning.load_from_checkpoint(
+    #     checkpoint_path=ckpt, hparams_file=os.path.join(logdir, 'hparams.yaml')).to(device)
+    model = ModelLightning.load_from_checkpoint(checkpoint_path=ckpt).to(device)
+
+    # if args.model == 'sage':
+    #     softmax = True
+    # elif args.model == 'gat':
+    #     softmax = False
+    # test_acc, test_f1 = evaluate(model, datamodule.g, datamodule.n_classes,
+    #                              datamodule.multilabel, datamodule.test_nid, device, softmax)
+    # print('Test Accuracy:', test_acc)
+    # print('Test F1:', test_f1)
+    with th.no_grad():
+        graph = datamodule.g
+        pred = model.module.inference(
+            graph,
+            graph.ndata["features"],
+            f"cuda:{args.gpu}" if args.gpu != -1 else "cpu",
+            args.batch_size,
+            args.num_workers,
+        )
+        for nid, split_name in zip(
+            [datamodule.train_nid, datamodule.val_nid, datamodule.test_nid],
+            ["Train", "Validation", "Test"],
+        ):
+            nid = nid.to(pred.device).long()
+            pred_nid = pred[nid]
+            label = graph.ndata["labels"][nid]
+            f1score = model.f1score_class().to(pred.device)
+            acc = f1score(pred_nid, label)
+            print(f"{split_name} accuracy: {acc.item()}")

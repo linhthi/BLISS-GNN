@@ -28,7 +28,7 @@ def normalized_edata(g, weight=None):
 
 class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.05, num_steps=5000,
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.1, num_steps=5000,
                  allow_zero_in_degree=False, model='sage'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
@@ -125,6 +125,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         insg = dgl.compact_graphs(insg, seed_nodes)
         # update weights (w_ij)
         exp_weights = self.exp3_weights[idx][insg.edata[dgl.EID].long()]
+        exp_weights = torch.nan_to_num(exp_weights)
         # \sum_{j} w_{ij}, sum of weights per node
         exp3_weights_sum = dgl.ops.copy_e_sum(insg, exp_weights)
         # \frac{w_{ij}}{exp3_weights_sum}, divide exp_weights over exp_weights_sum
