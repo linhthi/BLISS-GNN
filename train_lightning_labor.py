@@ -187,7 +187,8 @@ class DataModule(LightningDataModule):
     def __init__(self, dataset_name, data_cpu=False, graph_cpu=False, use_uva=False, fan_out=[10, 25],
                  device=th.device('cpu'), batch_size=1000, num_workers=4, sampler='labor',
                  importance_sampling=0, layer_dependency=False, batch_dependency=1, cache_size=0,
-                 num_steps=5000, allow_zero_in_degree=False, model='sage', seed=123):
+                 num_steps=5000, allow_zero_in_degree=False, model='sage', seed=123,
+                 eta=0.1, delta=0.01):
         super().__init__()
 
         # seed_everything(seed)
@@ -204,6 +205,8 @@ class DataModule(LightningDataModule):
 
         self.sampler_name = sampler
         self.num_steps = num_steps
+        self.eta = eta
+        self.delta = delta
         fanouts = [int(_) for _ in fan_out]
         if sampler == 'full':
             sampler = dgl.dataloading.MultiLayerFullNeighborSampler(
@@ -216,8 +219,8 @@ class DataModule(LightningDataModule):
             g.edata['w'] = normalized_edata(g)
             sampler = (PoissonBanditLadiesSampler if 'p' in sampler else BanditLadiesSampler)(
                 fanouts, node_embedding='features', num_steps=self.num_steps,
-                eta=self.eta, delta=self.delta
-                allow_zero_in_degree=allow_zero_in_degree, model=model)
+                allow_zero_in_degree=allow_zero_in_degree, model=model,
+                eta=self.eta, delta=self.delta)
         elif 'ladies' in sampler:
             g.edata['w'] = normalized_edata(g)
             # g.edata['w'] = normalized_edata(g, weight='weight')
