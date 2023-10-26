@@ -28,7 +28,7 @@ def normalized_edata(g, weight=None):
 
 class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.1, num_steps=5000,
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.01, num_steps=5000,
                  allow_zero_in_degree=False, model='sage'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
@@ -96,6 +96,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # so that we can compute the edge weights of the block.
         # This is why we need a find_indices_in() function.
         neighbor_nodes_idx = torch.multinomial(prob, min(num, prob.shape[0]), replacement=self.replace)
+        # print('neighbor_nodes_idx', neighbor_nodes_idx, neighbor_nodes_idx.shape)
         return neighbor_nodes_idx
 
     def exp3_probabilities(self, idx, g, seed_nodes):
@@ -125,7 +126,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         insg = dgl.compact_graphs(insg, seed_nodes)
         # update weights (w_ij)
         exp_weights = self.exp3_weights[idx][insg.edata[dgl.EID].long()]
-        exp_weights = torch.nan_to_num(exp_weights)
+        # exp_weights = torch.nan_to_num(exp_weights)
         # \sum_{j} w_{ij}, sum of weights per node
         exp3_weights_sum = dgl.ops.copy_e_sum(insg, exp_weights)
         # \frac{w_{ij}}{exp3_weights_sum}, divide exp_weights over exp_weights_sum
@@ -234,7 +235,8 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # delta: \sqrt{\frac{(1 - \eta) \eta^4 k^5 \ln(\frac{n}{k})}{T n^4}}
         # delta = torch.sqrt(((1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i))/(self.T*n_i**4))
         # print('delta', delta, delta.shape)
-        delta = self.eta
+        # delta = self.eta
+        delta = 0.6
         # delta = 0.01
 
         # The rewards obtained for each node in the previous iteration
@@ -350,8 +352,8 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
           self.exp3_weights = torch.ones(len(self.nodes_per_layer), g.num_edges()).to(g.device)
         
         # convert seed_nodes IDs to tensor
-        # seed_nodes = torch.tensor(seed_nodes) # <==============
-        seed_nodes = torch.tensor([0, 1], dtype=torch.int32).to(g.device)
+        seed_nodes = torch.tensor(seed_nodes) # <==============
+        # seed_nodes = torch.tensor([0, 1], dtype=torch.int32).to(g.device)
         # copy seed_nodes to output_nodes (seed_nodes will be updated, output_nodes not)
         output_nodes = seed_nodes
         # empty list 
@@ -379,6 +381,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             # print('seed_nodes', seed_nodes, seed_nodes.shape)
             # add blocks at the beginning of blocks list (top-down)
             blocks.insert(0, block)
+            # print("Length Seed nodes, out_nodes: ", seed_nodes.shape, output_nodes.shape)
         return seed_nodes, output_nodes, blocks
 
 class PoissonBanditLadiesSampler(BanditLadiesSampler):

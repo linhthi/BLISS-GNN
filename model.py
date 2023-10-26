@@ -176,7 +176,6 @@ class GATv2(nn.Module):
                 g.num_nodes(),
                 self.num_hidden * self.heads[l] if l != len(self.gatv2_layers) - 1 else self.num_classes,
             )
-            
             sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
             dataloader = dgl.dataloading.DataLoader(
                 g,
@@ -260,7 +259,6 @@ class SAGE(nn.Module):
                 g.num_nodes(),
                 self.n_hidden if l != len(self.layers) - 1 else self.n_classes,
             )
-
             sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
             dataloader = dgl.dataloading.DataLoader(
                 g,

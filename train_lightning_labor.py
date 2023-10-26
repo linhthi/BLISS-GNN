@@ -20,8 +20,8 @@
 #  */
 
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS
-from ladies_toy import PoissonLadiesSampler
-from ladies import LadiesSampler
+# from ladies_toy import PoissonLadiesSampler
+from ladies import LadiesSampler, PoissonLadiesSampler
 from dgl_bandit_sampler import *
 from model import SAGE, GATv2
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -180,6 +180,7 @@ class ModelLightning(LightningModule):
         optimizer = th.optim.Adam(
             self.parameters(), lr=self.lr, weight_decay=0.0001)
         return optimizer
+
 
 
 class DataModule(LightningDataModule):
@@ -471,6 +472,7 @@ def evaluate(model, g, n_classes, multilabel, val_nid, device, softmax=True):
 
 
 
+
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser()
     argparser.add_argument('--gpu', type=int, default=-1,
@@ -555,6 +557,7 @@ if __name__ == '__main__':
                       callbacks=[checkpoint_callback, batchsize_callback],
                       logger=logger)
     trainer.fit(model, datamodule=datamodule)
+    # trainer.test(model, datamodule=datamodule)
 
     # Test
     logdir = os.path.join(args.logdir, subdir)
@@ -597,3 +600,6 @@ if __name__ == '__main__':
             f1score = model.f1score_class().to(pred.device)
             acc = f1score(pred_nid, label)
             print(f"{split_name} accuracy: {acc.item()}")
+
+    # Inference with sampler on test set
+    
