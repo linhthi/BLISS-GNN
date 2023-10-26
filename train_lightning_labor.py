@@ -216,6 +216,7 @@ class DataModule(LightningDataModule):
             g.edata['w'] = normalized_edata(g)
             sampler = (PoissonBanditLadiesSampler if 'p' in sampler else BanditLadiesSampler)(
                 fanouts, node_embedding='features', num_steps=self.num_steps,
+                eta=self.eta, delta=self.delta
                 allow_zero_in_degree=allow_zero_in_degree, model=model)
         elif 'ladies' in sampler:
             g.edata['w'] = normalized_edata(g)
@@ -480,7 +481,7 @@ if __name__ == '__main__':
     argparser.add_argument('--model', type=str, default='sage')
     argparser.add_argument('--dataset', type=str, default='cora')
     argparser.add_argument('--eta', type=float, default=0.1)
-    argparser.add_argument('--delta', type=float, default=0.1)
+    argparser.add_argument('--delta', type=float, default=0.001)
     argparser.add_argument('--num-epochs', type=int, default=-1)
     argparser.add_argument('--num-steps', type=int, default=5000)
     argparser.add_argument('--num-hidden', type=int, default=64)
@@ -537,7 +538,7 @@ if __name__ == '__main__':
         [int(_) for _ in args.fan_out.split(',')],
         device, args.batch_size, args.num_workers, args.sampler, args.importance_sampling,
         args.layer_dependency, args.batch_dependency, args.cache_size, args.num_steps,
-        args.allow_zero_in_degree, args.model)
+        args.allow_zero_in_degree, args.model, args.delta, args.eta)
 
     model = ModelLightning(
         datamodule.in_feats, args.num_hidden, datamodule.n_classes, args.num_layers,
@@ -547,8 +548,8 @@ if __name__ == '__main__':
     # Train
     checkpoint_callback = ModelCheckpoint(monitor='val_acc', save_top_k=1)
     batchsize_callback = BatchSizeCallback(args.vertex_limit)
-    subdir = '{}_{}_{}_{}_{}_{}'.format(args.model, args.dataset, args.sampler, args.importance_sampling,
-                                        args.num_epochs, args.batch_size)
+    subdir = '{}_{}_{}_{}_{}_{}_eta{}_delta{}'.format(args.model, args.dataset, args.sampler, args.importance_sampling,
+                                        args.num_epochs, args.batch_size, args.eta, args.delta)
     logger = TensorBoardLogger(args.logdir, name=subdir)
     trainer = Trainer(accelerator="gpu" if args.gpu != -1 else "cpu",
                       devices=[args.gpu] if args.gpu != -1 else "auto",

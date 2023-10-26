@@ -28,7 +28,7 @@ def normalized_edata(g, weight=None):
 
 class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.01, num_steps=5000,
+                 node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.1, delta = 0.001, num_steps=5000,
                  allow_zero_in_degree=False, model='sage'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
@@ -39,6 +39,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         self.node_embedding = node_embedding
         self.replace = replace
         self.eta = eta
+        self.delta = delta
         self.T = num_steps
         self.exp3_weights = None
         self.allow_zero_in_degree = allow_zero_in_degree
@@ -236,7 +237,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # delta = torch.sqrt(((1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i))/(self.T*n_i**4))
         # print('delta', delta, delta.shape)
         # delta = self.eta
-        delta = 0.6
+        # delta = 0.6
         # delta = 0.01
 
         # The rewards obtained for each node in the previous iteration
@@ -246,7 +247,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # \hat{r}_{ij} = \frac{r_{ij}}{p_i}, Compute rewards_hat by dividing rewards by node probabilities
         rewards_hat = dgl.ops.e_div_u(mfg, rewards, prob)
         # \frac{\delta \hat{r}_{ij}}{k p_i}, compute delta_reward for edges
-        delta_reward = dgl.ops.e_mul_v(mfg, rewards_hat, delta / n_i)
+        delta_reward = dgl.ops.e_mul_v(mfg, rewards_hat, self.delta / n_i)
         # limit delta_reward to 1
         delta_reward[delta_reward > 1] = 1
         # \exp(\frac{\delta \hat{r}_{ij}}{k p_i}), take exp of delta_reward
@@ -387,8 +388,8 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
 class PoissonBanditLadiesSampler(BanditLadiesSampler):
     def __init__(
         self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-        node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.1, num_steps=5000,
-        allow_zero_in_degree=False, model='sage'
+        node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.1, delta=0.001, num_steps=5000,
+        allow_zero_in_degree=False, model='sage',
     ):
         super().__init__(
             nodes_per_layer, importance_sampling, weight, out_weight,
