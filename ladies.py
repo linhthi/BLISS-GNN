@@ -121,7 +121,7 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
                 W[insg.edata[dgl.EID].long()])
             seed_nodes = block.srcdata[dgl.NID]
             blocks.insert(0, block)
-            print("Length Seed nodes, out_nodes: ", len(seed_nodes), len(output_nodes))
+            # print("Length Seed nodes, out_nodes: ", len(seed_nodes), len(output_nodes))
         return seed_nodes, output_nodes, blocks
     
 class PoissonLadiesSampler(LadiesSampler):
