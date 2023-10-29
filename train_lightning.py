@@ -561,7 +561,7 @@ if __name__ == "__main__":
     argparser.add_argument("--num-steps", type=int, default=-1)
     # argparser.add_argument("--min-steps", type=int, default=0)
     argparser.add_argument("--num-hidden", type=int, default=256)
-    argparser.add_argument("--num-layers", type=int, default=3)
+    argparser.add_argument("--num-layers", type=int, default=2)
     argparser.add_argument('--num-in-heads', type=int,
                            default=4, help="number of hidden attention heads")
     argparser.add_argument('--num-out-heads', type=int,
@@ -574,8 +574,8 @@ if __name__ == "__main__":
                            default=False, help="use residual connection")
     argparser.add_argument('--allow-zero-in-degree', action="store_true",
                            default=False, help="allow zero in degree")
-    argparser.add_argument("--fan-out", type=str, default="10,10,10")
-    argparser.add_argument("--batch-size", type=int, default=1024)
+    argparser.add_argument("--fan-out", type=str, default="2000,4000")
+    argparser.add_argument("--batch-size", type=int, default=1000)
     argparser.add_argument("--lr", type=float, default=0.001)
     argparser.add_argument("--dropout", type=float, default=0.5)
     argparser.add_argument(
@@ -684,7 +684,7 @@ if __name__ == "__main__":
         args.model,
         args.dataset,
         args.sampler,
-        args.num_epochs,
+        args.num_steps,
         args.batch_size
     )
     logger = TensorBoardLogger(args.logdir, name=subdir)

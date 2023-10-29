@@ -196,8 +196,9 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # \frac{\alpha_{ij}^2}{k\cdot q_j^2} \|h_j\|_2^2, calculate rewards
         rewards = alpha_div_n_i * h_j_norm_div_q_j
         # store rewrds inside the block data
+        # print('rewards', rewards.min(), rewards.max())
         mfg.edata['rewards'] = rewards
-        
+
     def update_exp3_weights(self, idx, mfg, g):
         r"""
         Update the exp3 weights of each edge being selected using the rewards obtained
@@ -224,16 +225,20 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             mfgs (DGLBlock): the blocks (in top-down format) to compute exp3 edge weight for
         """
         # Number of nodes to select in each iteration (sample size or number of arms).
-        k_i = mfg.out_degrees()
-        # print('k_i', k_i)
+        k_i = mfg.out_degrees()[:len(mfg.dstdata[dgl.NID].long())]
         # Number of nodes in the current subgraph (neigbor of a node or degree)
         n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
 
         # Calculate the delta value for exp3
         # delta: \sqrt{\frac{(1 - \eta) \eta^4 k^5 \ln(\frac{n}{k})}{T n^4}}
-        # delta = torch.sqrt(((1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i))/(self.T*n_i**4))
-        # print('delta', delta, delta.shape)
-        delta = self.eta / 10
+        nom = (1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i)
+        dom = (self.T*n_i**4)
+        delta = torch.sqrt(nom/dom)
+        delta = torch.nan_to_num(delta)
+        # print('delta', delta)
+
+        # delta = self.eta / n_i**2
+        # delta = self.eta / 100
         # delta = 0.01
 
         # The rewards obtained for each node in the previous iteration
@@ -244,8 +249,9 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         rewards_hat = dgl.ops.e_div_u(mfg, rewards, prob)
         # \frac{\delta \hat{r}_{ij}}{k p_i}, compute delta_reward for edges
         delta_reward = dgl.ops.e_mul_v(mfg, rewards_hat, delta / n_i)
-        # limit delta_reward to 1
-        delta_reward[delta_reward > 1] = 1
+        # print('delta_reward', delta_reward.max())
+        # # limit delta_reward to 1
+        # delta_reward[delta_reward > 1] = 1
         # \exp(\frac{\delta \hat{r}_{ij}}{k p_i}), take exp of delta_reward
         exp_rewards = torch.exp(delta_reward)
         # update weights
@@ -381,7 +387,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
 class PoissonBanditLadiesSampler(BanditLadiesSampler):
     def __init__(
         self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
-        node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.1, num_steps=5000,
+        node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
         allow_zero_in_degree=False, model='sage'
     ):
         super().__init__(
