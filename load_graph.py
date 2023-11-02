@@ -9,7 +9,7 @@ def load_data(data):
     return g, data.num_classes
 
 def load_dgl(name):
-    from dgl.data import CoraGraphDataset, CiteseerGraphDataset, PubmedGraphDataset, RedditDataset, YelpDataset, FlickrDataset
+    from dgl.data import CoraGraphDataset, CiteseerGraphDataset, PubmedGraphDataset, RedditDataset, YelpDataset, FlickrDataset, ActorDataset
 
     d = {
         'cora': CoraGraphDataset,
@@ -17,7 +17,8 @@ def load_dgl(name):
         'pubmed': PubmedGraphDataset,
         'reddit': RedditDataset,
         'yelp': YelpDataset,
-        'flickr': FlickrDataset
+        'flickr': FlickrDataset,
+        'actor': ActorDataset
     }
 
     return load_data(d[name]())
@@ -65,7 +66,7 @@ def load_ogb(name, root="dataset"):
 
 def load_dataset(dataset_name):
     multilabel = False
-    if dataset_name in ['reddit', 'cora', 'citeseer', 'pubmed', 'yelp', 'flickr']:
+    if dataset_name in ['reddit', 'cora', 'citeseer', 'pubmed', 'yelp', 'flickr', 'actor']:
         g, n_classes = load_dgl(dataset_name)
         multilabel = dataset_name in ['yelp']
         if multilabel:
