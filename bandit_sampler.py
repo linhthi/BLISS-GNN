@@ -182,21 +182,32 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         Returns:
             DGLBlock: the mfgs after adding reward for each edge to each of mfgs 
         """
-        # n_i is number of nodes in the subgraph (sample size or number of arms)
-        n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
+        # # n_i is number of nodes in the subgraph (sample size or number of arms)
+        # n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
+
+        # Number of nodes to select in each iteration (sample size or number of arms).
+        k_i = mfg.out_degrees()[:len(mfg.dstdata[dgl.NID].long())]
+        # print('ki', k_i.shape)
         # calculate \|h_j\| (node embedding norm)
         h_j_norm = mfg.srcdata['embed_norm']
+        # print('h_j_norm.shape', h_j_norm.shape)
         # node prob
         # q = mfg.srcdata[self.node_prob]
         q_ij = mfg.edata['q_ij']
-        # \frac{\alpha_{ij}^2}{n_i}
-        alpha_div_n_i = dgl.ops.e_div_v(mfg, alpha**2, n_i)
+        # \frac{\alpha_{ij}^2}{k_i}
+        alpha_div_k_i = dgl.ops.e_div_v(mfg, alpha**2, k_i)
+        alpha_div_k_i = torch.nan_to_num(alpha_div_k_i, posinf=0)
+        # print()
+        # print('alpha_div_k_i=========', alpha_div_k_i.min().tolist(), alpha_div_k_i.max().tolist())
+
         # \frac{\|h_j\|_2^2}{q_{ij}^2}
         h_j_norm_div_q_j = dgl.ops.u_div_e(mfg, h_j_norm ** 2, q_ij ** 2)
+        # print('h_j_norm_div_q_j=========', h_j_norm_div_q_j.min().tolist(), h_j_norm_div_q_j.max().tolist())
+
         # \frac{\alpha_{ij}^2}{k\cdot q_j^2} \|h_j\|_2^2, calculate rewards
-        rewards = alpha_div_n_i * h_j_norm_div_q_j
+        rewards = alpha_div_k_i * h_j_norm_div_q_j
         # store rewrds inside the block data
-        # print('rewards', rewards.min(), rewards.max())
+        # print('rewards=========', rewards.min(), rewards.max())
         mfg.edata['rewards'] = rewards
 
     def update_exp3_weights(self, idx, mfg, g):
@@ -243,12 +254,18 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
 
         # The rewards obtained for each node in the previous iteration
         rewards = mfg.edata['rewards'].clone().detach()
+        # print()
+        # print('+'*50)
+        # print('rewards=========', rewards.min().tolist(), rewards.max().tolist())
         # Unnormalized probability distribution of nodes in the current subgraph.
         prob = mfg.srcdata[self.node_prob].clone().detach()
         # \hat{r}_{ij} = \frac{r_{ij}}{p_i}, Compute rewards_hat by dividing rewards by node probabilities
         rewards_hat = dgl.ops.e_div_u(mfg, rewards, prob)
+        # print('rewards_hat=========', rewards_hat.min().tolist(), rewards_hat.max().tolist())
         # \frac{\delta \hat{r}_{ij}}{k p_i}, compute delta_reward for edges
         delta_reward = dgl.ops.e_mul_v(mfg, rewards_hat, delta / n_i)
+        # print('delta_reward=========', delta_reward.min().tolist(), delta_reward.max().tolist())
+        # print('+'*50)
         # print('delta_reward', delta_reward.max())
         # # limit delta_reward to 1
         # delta_reward[delta_reward > 1] = 1
