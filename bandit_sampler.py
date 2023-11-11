@@ -130,7 +130,10 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # \frac{w_{ij}}{exp3_weights_sum}, divide exp_weights over exp_weights_sum
         exp_weights_divided = dgl.ops.e_div_v(insg, exp_weights, exp3_weights_sum)
         # number of edges incoming to the seed node (degree)
-        n_i = g.in_degrees(insg.ndata[dgl.NID])
+        n_i = g.in_degrees(insg.srcdata[dgl.NID])
+        # print('\nni', n_i, n_i.shape)
+        # print('\nni_2', (g.in_degrees()[insg.srcdata[dgl.NID].long()] == n_i).all())
+
         # update edge prob 
         # (1 - \eta) {exp_weights_divided} + \frac{\eta}{k}
         edge_prob = dgl.ops.v_add_e(insg, (self.eta / n_i), (1 - self.eta) * (exp_weights_divided)) 
@@ -186,8 +189,9 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
 
         # Number of nodes to select in each iteration (sample size or number of arms).
-        k_i = mfg.out_degrees()[:len(mfg.dstdata[dgl.NID].long())]
-        # print('ki', k_i.shape)
+        k_i = mfg.in_degrees()[:len(mfg.dstdata[dgl.NID])]
+        # print('\nki', k_i, k_i.shape)
+        
         # calculate \|h_j\| (node embedding norm)
         h_j_norm = mfg.srcdata['embed_norm']
         # print('h_j_norm.shape', h_j_norm.shape)
@@ -206,7 +210,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
 
         # \frac{\alpha_{ij}^2}{k\cdot q_j^2} \|h_j\|_2^2, calculate rewards
         rewards = alpha_div_k_i * h_j_norm_div_q_j
-        # store rewrds inside the block data
+        # store rewards inside the block data
         # print('rewards=========', rewards.min(), rewards.max())
         mfg.edata['rewards'] = rewards
 
@@ -236,7 +240,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             mfgs (DGLBlock): the blocks (in top-down format) to compute exp3 edge weight for
         """
         # Number of nodes to select in each iteration (sample size or number of arms).
-        k_i = mfg.out_degrees()[:len(mfg.dstdata[dgl.NID].long())]
+        k_i = mfg.in_degrees()[:len(mfg.dstdata[dgl.NID].long())]
         # Number of nodes in the current subgraph (neigbor of a node or degree)
         n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
 
@@ -354,6 +358,8 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # add edge prob
         block.edata['q_ij'] = W
         # add node prob
+        # print('P', P, P.shape)
+        # print()
         block.srcdata[self.node_prob] = P
 
         # get node ID mapping for source nodes
@@ -378,7 +384,9 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # empty list 
         blocks = []
         # loop on the reverse of block IDs
+        # print('+'*30)
         for block_id in reversed(range(len(self.nodes_per_layer))):
+            # print('-'*10, f'BLOCK{block_id}', '-'*10)
             # get the number of sample from nodes_per_layer per each block
             num_nodes_to_sample = self.nodes_per_layer[block_id]
             # calc exp3_prob, 1 / N_i
@@ -399,6 +407,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             seed_nodes = block.srcdata[dgl.NID]
             # add blocks at the beginning of blocks list (top-down)
             blocks.insert(0, block)
+        # print('+'*30)
         return seed_nodes, output_nodes, blocks
 
 class PoissonBanditLadiesSampler(BanditLadiesSampler):

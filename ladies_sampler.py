@@ -45,7 +45,7 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
             out_frontier = dgl.reverse(insg, copy_edata=True)
             weight = weight[out_frontier.edata[dgl.EID].long()]
             prob = dgl.ops.copy_e_sum(out_frontier, weight ** 2)
-            prob = torch.sqrt(prob)
+            # prob = torch.sqrt(prob)
         else:
             prob = torch.ones(insg.num_nodes())
             prob[insg.out_degrees() == 0] = 0
