@@ -126,17 +126,23 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # update weights (w_ij)
         exp_weights = self.exp3_weights[idx][insg.edata[dgl.EID].long()]
         # \sum_{j} w_{ij}, sum of weights per node
+        # print('exp_weights', exp_weights, exp_weights.shape)
         exp3_weights_sum = dgl.ops.copy_e_sum(insg, exp_weights)
+        # print('exp3_weights_sum', exp3_weights_sum, exp3_weights_sum.shape)
         # \frac{w_{ij}}{exp3_weights_sum}, divide exp_weights over exp_weights_sum
         exp_weights_divided = dgl.ops.e_div_v(insg, exp_weights, exp3_weights_sum)
+        # print('exp_weights_divided', exp_weights_divided, exp_weights_divided.shape)
         # number of edges incoming to the seed node (degree)
         n_i = g.in_degrees(insg.srcdata[dgl.NID])
         # print('\nni', n_i, n_i.shape)
+        # print('\nni_2', g.in_degrees(insg.dstdata[dgl.NID]), g.in_degrees(insg.dstdata[dgl.NID]).shape)
+        # print('\nni_3', g.in_degrees()[insg.dstdata[dgl.NID].long()], g.in_degrees()[insg.dstdata[dgl.NID].long()].shape)
         # print('\nni_2', (g.in_degrees()[insg.srcdata[dgl.NID].long()] == n_i).all())
 
         # update edge prob 
         # (1 - \eta) {exp_weights_divided} + \frac{\eta}{k}
         edge_prob = dgl.ops.v_add_e(insg, (self.eta / n_i), (1 - self.eta) * (exp_weights_divided)) 
+        # print('edge_prob', edge_prob, edge_prob.shape)
         return edge_prob, insg
     
     def calculate_alpha(self, mfg):
