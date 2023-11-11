@@ -379,6 +379,7 @@ class DataModule(LightningDataModule):
         data_cpu=False,
         use_uva=False,
         fan_out=[10, 25],
+        eta=0.4,
         device=th.device("cpu"),
         batch_size=1000,
         num_workers=4,
@@ -393,6 +394,7 @@ class DataModule(LightningDataModule):
 
         self.sampler_name = sampler
         self.num_steps = num_steps
+        self.eta = eta
 
         g, n_classes, multilabel = load_dataset(dataset_name)
         if undirected:
@@ -426,6 +428,7 @@ class DataModule(LightningDataModule):
                 importance_sampling=importance_sampling,
                 node_embedding='features',
                 num_steps=num_steps,
+                eta=self.eta,
                 allow_zero_in_degree=allow_zero_in_degree,
                 model=model
             )
@@ -575,6 +578,7 @@ if __name__ == "__main__":
     argparser.add_argument('--allow-zero-in-degree', action="store_true",
                            default=False, help="allow zero in degree")
     argparser.add_argument("--fan-out", type=str, default="2000,4000")
+    argparser.add_argument("--eta", type=float, default=0.4)
     argparser.add_argument("--batch-size", type=int, default=1000)
     argparser.add_argument("--lr", type=float, default=0.001)
     argparser.add_argument("--dropout", type=float, default=0.5)
@@ -624,6 +628,7 @@ if __name__ == "__main__":
         args.data_cpu,
         args.use_uva,
         [int(_) for _ in args.fan_out.split(",")],
+        args.eta,
         device,
         args.batch_size,
         args.num_workers,
@@ -680,12 +685,15 @@ if __name__ == "__main__":
         )
     )
 
-    subdir = "{}_{}_{}_{}_{}".format(
+    subdir = "{}_{}_{}_steps_{}_bs_{}_layers_{}_lr_{}_eta_{}".format(
         args.model,
         args.dataset,
         args.sampler,
         args.num_steps,
-        args.batch_size
+        args.batch_size,
+        args.num_layers,
+        args.lr,
+        args.eta
     )
     logger = TensorBoardLogger(args.logdir, name=subdir)
     trainer = Trainer(
