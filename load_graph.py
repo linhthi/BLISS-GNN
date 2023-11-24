@@ -113,6 +113,8 @@ class ToyDataset(DGLDataset):
         self.graph.ndata["train_mask"] = train_mask
         self.graph.ndata["val_mask"] = val_mask
         self.graph.ndata["test_mask"] = test_mask
+        self.graph.ndata["_ID"] = th.tensor([0, 1, 2, 3, 4] , dtype= th.int64)
+        self.graph.edata["_ID"] = th.tensor([0, 1, 2, 3] , dtype= th.int64)
 
     def __getitem__(self, i):
         return self.graph

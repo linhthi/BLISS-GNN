@@ -30,6 +30,9 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
         self.edge_weight = weight
         self.output_weight = out_weight
         self.replace = replace
+        self.converge = []
+        self.converge_c = {0: 0, 1: 0, 2: 0, 3: 0}
+
     
     def compute_prob(self, g, seed_nodes, weight, num):
         """
@@ -45,7 +48,7 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
             out_frontier = dgl.reverse(insg, copy_edata=True)
             weight = weight[out_frontier.edata[dgl.EID].long()]
             prob = dgl.ops.copy_e_sum(out_frontier, weight ** 2)
-            # prob = torch.sqrt(prob)
+            prob = torch.sqrt(prob)
         else:
             prob = torch.ones(insg.num_nodes())
             prob[insg.out_degrees() == 0] = 0
@@ -92,9 +95,14 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
         P = P_sg[u_nodes.long()]
         W = W_sg[sg.edata[dgl.EID].long()]
         W_tilde = dgl.ops.e_div_u(sg, W, P)
+        # print('\nW_tildeAA', W_tilde)
+        # print('W', W)
+        # print('P', P)
+
         W_tilde_sum = dgl.ops.copy_e_sum(sg, W_tilde)
         d = sg.in_degrees()
-        W_tilde = dgl.ops.e_mul_v(sg, W_tilde, d / W_tilde_sum)
+        W_tilde = dgl.ops.e_mul_v(sg, W_tilde, d / W_tilde_sum) # can use w_tilde as q_ij (without degree multi[lication])
+        # print('W_tilde', W_tilde)
 
         block = dgl.to_block(sg, seed_nodes_idx.type(sg.idtype))
         block.edata[self.output_weight] = W_tilde
@@ -107,18 +115,52 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
         return block
     
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
+        
+        # seed_nodes = torch.tensor(seed_nodes)
+        seed_nodes = torch.tensor([0, 1], dtype=torch.int32).to(g.device)
         output_nodes = seed_nodes
-        seed_nodes = torch.tensor(seed_nodes)
+
         blocks = []
         for block_id in reversed(range(len(self.nodes_per_layer))):
             num_nodes_to_sample = self.nodes_per_layer[block_id]
             W = g.edata[self.edge_weight]
+            
             prob, insg = self.compute_prob(g, seed_nodes, W, num_nodes_to_sample)
+            print('\nprob', prob)
+            print('W', W)
+            # FF = dgl.ops.e_div_u(g, W, prob)
+            # print('FFAAAAA', FF)
+            # FF_sum = dgl.ops.copy_e_sum(g, FF)
+            # print('FF_sum', FF_sum)
+            # d = g.in_degrees()
+            # print('d', d)
+            # print('d / FF_sum', d / FF_sum)
+
+            # FF = dgl.ops.e_mul_v(g, FF, d / FF_sum)
+            # print('FF', FF)
+
+
             cand_nodes = insg.ndata[dgl.NID]
             neighbor_nodes_idx = torch.tensor(self.select_neighbors(prob, num_nodes_to_sample))
+            # print('neighbor_nodes_idx', neighbor_nodes_idx)
+            
+            # print(g.out_edges(neighbor_nodes_idx.type(g.idtype).tolist()))
+            # print(g.in_edges(neighbor_nodes_idx.type(g.idtype)))
+            # print(g.clone().out_edges([1], form='eid'))
+            # print(g.clone().in_edges([1], form='eid'))
+
+            neighbor_edges_idx = g.out_edges(neighbor_nodes_idx.type(g.idtype), form='eid')
+            # print('neighbor_nodes_idxIN', neighbor_edges_idx)
+
+            for idx in neighbor_edges_idx.tolist():
+                # print('idx', idx)
+                self.converge_c[idx] += 1
+            # print('self.converge_c', self.converge_c)
+            self.converge.append(list(self.converge_c.values()))
             block = self.generate_block(
                 insg, neighbor_nodes_idx.type(g.idtype), seed_nodes.type(g.idtype), prob,
                 W[insg.edata[dgl.EID].long()])
+            # print(block.edata)
             seed_nodes = block.srcdata[dgl.NID]
             blocks.insert(0, block)
         return seed_nodes, output_nodes, blocks
