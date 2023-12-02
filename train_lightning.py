@@ -38,13 +38,14 @@ from bandit_sampler import BanditLadiesSampler, PoissonBanditLadiesSampler, norm
 
 from load_graph import load_dataset
 from model import SAGE, GATv2
-from pytorch_lightning import LightningDataModule, LightningModule, Trainer
+from pytorch_lightning import LightningDataModule, LightningModule, Trainer, seed_everything
 from pytorch_lightning.callbacks import Callback, EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 
 from torchmetrics.classification import MulticlassF1Score, MultilabelF1Score
 
 th.set_printoptions(profile="full")
+seed_everything(42)
 
 class SAGELightning(LightningModule):
     def __init__(
@@ -223,153 +224,35 @@ class GATv2Lightning(SAGELightning):
         lr,
         multilabel,
         ):
-        super().__init__()
+        super().__init__(
+            in_feats,
+            n_hidden,
+            n_classes,
+            n_layers,
+            activation,
+            dropout,
+            lr,
+            multilabel
+        )
         self.save_hyperparameters()
-
-        heads = ([num_in_heads] * n_layers) + [num_out_heads]
+        heads = ([num_in_heads] * (n_layers - 1)) + [num_out_heads]
         self.module = GATv2(n_layers, in_feats, n_hidden, n_classes, heads, activation, dropout,
                             attn_dropout, negative_slope, residual, allow_zero_in_degree)
         self.lr = lr
-        self.f1score_class = lambda:(MulticlassF1Score if not multilabel else MultilabelF1Score)(n_classes, average="micro")
+        self.f1score_class = lambda:(
+            MulticlassF1Score if not multilabel else MultilabelF1Score
+            )(n_classes, average="micro")
         self.train_acc = self.f1score_class()
         self.val_acc = self.f1score_class()
         self.num_steps = 0
         self.cum_sampled_nodes = [0 for _ in range(n_layers + 1)]
         self.cum_sampled_edges = [0 for _ in range(n_layers)]
         self.w = 0.99
-        if self.model == 'sage':
-            self.loss_fn = nn.NLLLoss() if not multilabel else nn.BCELoss()
-        elif self.model == 'gat':
-            self.loss_fn = nn.CrossEntropyLoss() if not multilabel else nn.BCEWithLogitsLoss() # nn.BCELoss()
-        self.final_activation = nn.LogSoftmax(dim=1) if not multilabel else nn.Sigmoid()
+        self.loss_fn = (
+            nn.CrossEntropyLoss() if not multilabel else nn.BCEWithLogitsLoss()
+        ) # nn.BCELoss()
+        # self.final_activation = nn.LogSoftmax(dim=1) if not multilabel else nn.Sigmoid()
         self.pt = 0
-
-    def num_sampled_nodes(self, i):
-        return (
-            self.cum_sampled_nodes[i] / self.num_steps
-            if self.w >= 1
-            else self.cum_sampled_nodes[i]
-            * (1 - self.w)
-            / (1 - self.w**self.num_steps)
-        )
-
-    def num_sampled_edges(self, i):
-        return (
-            self.cum_sampled_edges[i] / self.num_steps
-            if self.w >= 1
-            else self.cum_sampled_edges[i]
-            * (1 - self.w)
-            / (1 - self.w**self.num_steps)
-        )
-
-    def training_step(self, batch, batch_idx):
-        input_nodes, output_nodes, mfgs = batch
-        mfgs = [mfg.int().to(device) for mfg in mfgs]
-        self.num_steps += 1
-        for i, mfg in enumerate(mfgs):
-            self.cum_sampled_nodes[i] = (
-                self.cum_sampled_nodes[i] * self.w + mfg.num_src_nodes()
-            )
-            self.cum_sampled_edges[i] = (
-                self.cum_sampled_edges[i] * self.w + mfg.num_edges()
-            )
-            self.log(
-                "num_nodes/{}".format(i),
-                self.num_sampled_nodes(i),
-                prog_bar=True,
-                on_step=True,
-                on_epoch=False,
-            )
-            self.log(
-                "num_edges/{}".format(i),
-                self.num_sampled_edges(i),
-                prog_bar=True,
-                on_step=True,
-                on_epoch=False,
-            )
-        # for batch size monitoring
-        i = len(mfgs)
-        self.cum_sampled_nodes[i] = (
-            self.cum_sampled_nodes[i] * self.w + mfgs[-1].num_dst_nodes()
-        )
-        self.log(
-            "num_nodes/{}".format(i),
-            self.num_sampled_nodes(i),
-            prog_bar=True,
-            on_step=True,
-            on_epoch=False,
-        )
-
-        batch_inputs = mfgs[0].srcdata["features"]
-        batch_labels = mfgs[-1].dstdata["labels"]
-        self.st = time.time()
-        batch_pred = self.module(mfgs, batch_inputs)
-        loss = self.loss_fn(batch_pred, batch_labels)
-        self.train_acc(batch_pred, batch_labels.int())
-        self.log(
-            "train_acc",
-            self.train_acc,
-            prog_bar=True,
-            on_step=True,
-            on_epoch=True,
-            batch_size=batch_labels.shape[0],
-        )
-        self.log(
-            "train_loss",
-            loss,
-            on_step=True,
-            on_epoch=True,
-            batch_size=batch_labels.shape[0],
-        )
-        t = time.time()
-        self.log(
-            "iter_time",
-            t - self.pt,
-            prog_bar=True,
-            on_step=True,
-            on_epoch=False,
-        )
-        self.pt = t
-        return loss
-
-    def on_train_batch_end(self, outputs, batch, batch_idx):
-        self.log(
-            "forward_backward_time",
-            time.time() - self.st,
-            prog_bar=True,
-            on_step=True,
-            on_epoch=False,
-        )
-
-    def validation_step(self, batch, batch_idx, dataloader_idx=0):
-        input_nodes, output_nodes, mfgs = batch
-        mfgs = [mfg.int().to(device) for mfg in mfgs]
-        batch_inputs = mfgs[0].srcdata["features"]
-        batch_labels = mfgs[-1].dstdata["labels"]
-        batch_pred = self.module(mfgs, batch_inputs)
-        loss = self.loss_fn(batch_pred, batch_labels)
-        self.val_acc(batch_pred, batch_labels.int())
-        self.log(
-            "val_acc",
-            self.val_acc,
-            prog_bar=True,
-            on_step=False,
-            on_epoch=True,
-            sync_dist=True,
-            batch_size=batch_labels.shape[0],
-        )
-        self.log(
-            "val_loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            sync_dist=True,
-            batch_size=batch_labels.shape[0],
-        )
-
-    def configure_optimizers(self):
-        optimizer = th.optim.Adam(self.parameters(), lr=self.lr)
-        return optimizer
     
 class DataModule(LightningDataModule):
     def __init__(
@@ -548,6 +431,47 @@ class BatchSizeCallback(Callback):
             loop._combined_loader = None
             loop.setup_data()
             self.clear()
+    
+    # def on_train_end(self, trainer, datamodule):
+    #     if 'bandit' in trainer.datamodule.sampler_name:
+    #         for layer_id in range(len(trainer.datamodule.sampler.converge)):
+    #             y = trainer.datamodule.sampler.converge[layer_id]
+    #             x = range(0, len(y))
+    #             f1 = plt.figure(layer_id)
+    #             for i in range(len(y[0])):
+    #                 plt.plot(x,[pt[i] for pt in y], label = 'edge_%s'%i)
+    #             plt.grid()
+    #             plt.legend()
+    #         # f2 = plt.figure(2)
+    #         # plt.plot(self.inc_sin_0, label='edge_0')
+    #         # plt.plot(self.dec_sin_1, label='edge_1')
+    #         # plt.plot(self.inc_sin_2, label='edge_2')
+    #         # plt.plot(self.dec_sin_3, label='edge_3')
+    #         # plt.grid()
+    #         # plt.legend()
+    #         plt.show(block=True)
+
+    #     if ('ladies' in trainer.datamodule.sampler_name) or ('bandit' in trainer.datamodule.sampler_name):
+    #         y_v = trainer.datamodule.sampler.converge_v
+    #         # w = y_v.unique(return_counts=True)[1]/len(y_v)
+    #         # print(y_v[-1], [i/sum(y_v[-1]) for i in y_v[-1]])
+    #         x_v = range(0, len(y_v))
+    #         f1 = plt.figure('node_prob')
+    #         for i in range(len(y_v[0])):
+    #             plt.plot(x_v,[pt[i]/sum(pt) for pt in y_v], label = 'node_%s'%i)
+    #         plt.grid()
+    #         plt.legend()
+            
+    #         y_e = trainer.datamodule.sampler.converge_e
+    #         # w = y_e.unique(return_counts=True)[1]/len(y_e)
+    #         # print(y_e[-1], [i/sum(y_e[-1]) for i in y_e[-1]])
+    #         x_e = range(0, len(y_e))
+    #         f2 = plt.figure('edge_prob')
+    #         for i in range(len(y_e[0])):
+    #             plt.plot(x_e,[pt[i]/sum(pt) for pt in y_e], label = 'edge_%s'%i)
+    #         plt.grid()
+    #         plt.legend()
+    #         plt.show(block=True)
 
 
 if __name__ == "__main__":
