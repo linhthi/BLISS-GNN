@@ -44,6 +44,10 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         self.allow_zero_in_degree = allow_zero_in_degree
         self.model = model
         self.converge = [[] for _ in range(len(self.nodes_per_layer))]
+        self.converge_v = []
+        self.converge_e = []
+        self.converge_count_v = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+        self.converge_count_e = {0: 0, 1: 0, 2: 0, 3: 0}
     
     def compute_prob(self, insg, edge_prob, num):
         r"""
@@ -377,6 +381,14 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             W = edge_prob
             # sample the best n neighbor nodes from given the probabilities of neighbors (and the current nodes)
             chosen_nodes = self.select_neighbors(node_prob, num_nodes_to_sample)
+            # print('neighbor_nodes_idxIN', neighbor_edges_idx)
+            chosen_edges = g.out_edges(chosen_nodes.type(g.idtype), form='eid')
+            for idx in chosen_nodes.tolist():
+                self.converge_count_v[idx] += 1
+            self.converge_v.append(list(self.converge_count_v.values()))
+            for idx in chosen_edges.tolist():
+                self.converge_count_e[idx] += 1
+            self.converge_e.append(list(self.converge_count_e.values()))
             # print('chosen_nodes', chosen_nodes, chosen_nodes.shape)
             # print(g.clone().out_edges([2], form='eid'))
             # print(g.clone().in_edges([2], form='eid'))

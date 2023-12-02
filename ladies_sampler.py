@@ -30,8 +30,10 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
         self.edge_weight = weight
         self.output_weight = out_weight
         self.replace = replace
-        self.converge = []
-        self.converge_c = {0: 0, 1: 0, 2: 0, 3: 0}
+        self.converge_v = []
+        self.converge_e = []
+        self.converge_count_v = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+        self.converge_count_e = {0: 0, 1: 0, 2: 0, 3: 0}
 
     
     def compute_prob(self, g, seed_nodes, weight, num):
@@ -126,37 +128,24 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
             W = g.edata[self.edge_weight]
             
             prob, insg = self.compute_prob(g, seed_nodes, W, num_nodes_to_sample)
-            print('\nprob', prob)
-            print('W', W)
-            # FF = dgl.ops.e_div_u(g, W, prob)
-            # print('FFAAAAA', FF)
-            # FF_sum = dgl.ops.copy_e_sum(g, FF)
-            # print('FF_sum', FF_sum)
-            # d = g.in_degrees()
-            # print('d', d)
-            # print('d / FF_sum', d / FF_sum)
-
-            # FF = dgl.ops.e_mul_v(g, FF, d / FF_sum)
-            # print('FF', FF)
+            # print('\nprob', prob)
+            # print('W', W)
 
 
             cand_nodes = insg.ndata[dgl.NID]
             neighbor_nodes_idx = torch.tensor(self.select_neighbors(prob, num_nodes_to_sample))
             # print('neighbor_nodes_idx', neighbor_nodes_idx)
-            
-            # print(g.out_edges(neighbor_nodes_idx.type(g.idtype).tolist()))
-            # print(g.in_edges(neighbor_nodes_idx.type(g.idtype)))
-            # print(g.clone().out_edges([1], form='eid'))
-            # print(g.clone().in_edges([1], form='eid'))
 
             neighbor_edges_idx = g.out_edges(neighbor_nodes_idx.type(g.idtype), form='eid')
             # print('neighbor_nodes_idxIN', neighbor_edges_idx)
 
+            for idx in neighbor_nodes_idx.tolist():
+                self.converge_count_v[idx] += 1
+            self.converge_v.append(list(self.converge_count_v.values()))
+
             for idx in neighbor_edges_idx.tolist():
-                # print('idx', idx)
-                self.converge_c[idx] += 1
-            # print('self.converge_c', self.converge_c)
-            self.converge.append(list(self.converge_c.values()))
+                self.converge_count_e[idx] += 1
+            self.converge_e.append(list(self.converge_count_e.values()))
             block = self.generate_block(
                 insg, neighbor_nodes_idx.type(g.idtype), seed_nodes.type(g.idtype), prob,
                 W[insg.edata[dgl.EID].long()])

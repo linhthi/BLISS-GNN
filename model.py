@@ -111,44 +111,43 @@ class GATv2(nn.Module):
         if not allow_zero_in_degree:
             allow_zero_in_degree = not allow_zero_in_degree
             print('allow_zero_in_degree', allow_zero_in_degree)
-        
-        # input projection (no residual)
-        self.gatv2_layers.append(
-            custom_GATv2Conv(
-            in_dim, num_hidden, heads[0], feat_drop, attn_drop, negative_slope, False,
-            self.activation, bias=False, share_weights=True, allow_zero_in_degree=allow_zero_in_degree))
-        
-        # hidden layers
-        for l in range(1, self.num_layers-1):
-            # due to multi-head, the in_dim = num_hidden * num_heads
-            self.gatv2_layers.append(
-                custom_GATv2Conv(
-                num_hidden * heads[l - 1], num_hidden, heads[l], feat_drop, attn_drop, negative_slope, residual,
+
+        if num_layers > 1:
+            # input projection (no residual)
+            self.gatv2_layers.append(custom_GATv2Conv(
+                in_dim, num_hidden, heads[0], feat_drop, attn_drop, negative_slope, False,
                 self.activation, bias=False, share_weights=True, allow_zero_in_degree=allow_zero_in_degree))
-        
-        # output projection
-        self.gatv2_layers.append(
-            custom_GATv2Conv(
-            num_hidden * heads[-2], num_classes, heads[-1], feat_drop, attn_drop, negative_slope, residual,
-            None, bias=False, share_weights=True, allow_zero_in_degree=allow_zero_in_degree))
+            # hidden layers
+            for l in range(1, self.num_layers - 1):
+                # due to multi-head, the in_dim = num_hidden * num_heads
+                self.gatv2_layers.append(custom_GATv2Conv(
+                    num_hidden * heads[l - 1], num_hidden, heads[l], feat_drop, attn_drop, negative_slope, residual,
+                    self.activation, bias=False, share_weights=True, allow_zero_in_degree=allow_zero_in_degree))
+            # output projection
+            self.gatv2_layers.append(custom_GATv2Conv(
+                num_hidden * heads[-2], num_classes, heads[-1], feat_drop, attn_drop, negative_slope, residual,
+                None, bias=False, share_weights=True, allow_zero_in_degree=allow_zero_in_degree))
+        else:
+            self.gatv2_layers.append(custom_GATv2Conv(
+                in_dim, num_classes, heads[-1], feat_drop, attn_drop, negative_slope, residual,
+                None, bias=False, share_weights=True, allow_zero_in_degree=allow_zero_in_degree))
+
 
     def forward(self, blocks, inputs):
         h = inputs
+        # print(-1, h.shape)
         for l, block in enumerate(blocks):
-            # print('block.srcdata', block.srcdata['labels'].shape)
-            # print('block.edata', block.edata[dgl.EID].shape)
+            # print(f'block_{l}.srcdata', block.srcdata[dgl.NID], block.srcdata[dgl.NID].shape)
+            # print(f'block_{l}.edata', block.edata[dgl.EID], block.edata[dgl.EID].shape)
 
             # save the mag of (h) into block.srcdata
             block.srcdata['embed_norm'] = th.reshape(th.norm(h, dim=1, keepdim=True), (-1,))
+            # print(f'h_norm_{l}', block.srcdata['embed_norm'], block.srcdata['embed_norm'].shape)
             h, a = self.gatv2_layers[l](block, h, get_attention=True)
-            # print('aold', a, a.shape)
             a = th.mean(a.squeeze(dim=-1), dim=1) # average attention weights across heads
-            # a = a.squeeze(dim=-1).squeeze(dim=-1) # one head
-            # print('a', a, a.shape)
-            # print('an', an, an.shape)
+            # print(f'a_{l}', a, a.shape)
             block.edata['a_ij'] = a
-            # block.edata['an_ij'] = an
-            if l != len(blocks) - 1:
+            if l < len(blocks) - 1:
                 h = h.flatten(1)
             else:
                 # logits
@@ -156,8 +155,7 @@ class GATv2(nn.Module):
         # output projection
         return h
     
-    # L310 in gatv2conv add l2 norm.
-    def inference(self, g, x, device, batch_size, num_workers):
+    def inference(self, g, device, batch_size, use_uva, num_workers):
         """
         Inference with the GATv2 model on full neighbors (i.e. without neighbor sampling).
         g : the entire graph.
@@ -166,42 +164,48 @@ class GATv2(nn.Module):
         The inference code is written in a fashion that it could handle any number of nodes and
         layers.
         """
-        # During inference with sampling, multi-layer blocks are very inefficient because
-        # lots of computations in the first few layers are repeated.
-        # Therefore, we compute the representation of all nodes layer by layer.  The nodes
-        # on each layer are of course splitted in batches.
-        # TODO: can we standardize this?
+        # The difference between this inference function and the one in the official
+        # example is that the intermediate results can also benefit from prefetching.
+        g.ndata["h"] = g.ndata["features"]
+        sampler = dgl.dataloading.MultiLayerFullNeighborSampler(
+            1, prefetch_node_feats=["h"]
+        )
+        pin_memory = g.device != device and use_uva
+        dataloader = dgl.dataloading.DataLoader(
+            g,
+            th.arange(g.num_nodes(), dtype=g.idtype, device=g.device),
+            sampler,
+            device=device,
+            batch_size=batch_size,
+            shuffle=False,
+            drop_last=False,
+            use_uva=use_uva,
+            num_workers=num_workers,
+            persistent_workers=(num_workers > 0),
+        )
+
+        self.eval()
+
         for l, layer in enumerate(self.gatv2_layers):
-            y = th.zeros(
+            y = th.empty(
                 g.num_nodes(),
-                self.num_hidden * self.heads[l] if l != len(self.gatv2_layers) - 1 else self.num_classes,
+                self.num_hidden * self.heads[l] if l < len(self.gatv2_layers) - 1 else self.num_classes,
+                dtype=g.ndata["h"].dtype,
+                device=g.device,
+                pin_memory=pin_memory,
             )
-            
-            sampler = dgl.dataloading.MultiLayerFullNeighborSampler(1)
-            dataloader = dgl.dataloading.DataLoader(
-                g,
-                th.arange(g.num_nodes(), dtype=g.idtype, device=g.device),
-                sampler,
-                device=device if num_workers == 0 else None,
-                batch_size=batch_size,
-                shuffle=False,
-                drop_last=False,
-                num_workers=num_workers,
-            )
-
             for input_nodes, output_nodes, blocks in tqdm.tqdm(dataloader):
-                block = blocks[0]
-
-                block = block.int().to(device)
-                h = x[input_nodes.to(x.device, th.int64)].to(device)
-                h = layer(block, h)
-                if l != len(self.gatv2_layers) - 1:
+                x = blocks[0].srcdata["h"]
+                h = layer(blocks[0], x)
+                if l < len(self.gatv2_layers) - 1:
                     h = h.flatten(1)
                 else:
                     h = h.mean(1)
-                y[output_nodes.long()] = h.cpu()
-
-            x = y
+                # by design, our output nodes are contiguous
+                y[output_nodes[0].item() : output_nodes[-1].item() + 1] = h.to(
+                    y.device
+                )
+            g.ndata["h"] = y
         return y
 
 class SAGE(nn.Module):
@@ -236,7 +240,7 @@ class SAGE(nn.Module):
             # save the mag of (h) into block.srcdata
             block.srcdata['embed_norm'] = th.reshape(th.norm(h, dim=1, keepdim=True), (-1,))
             h = layer(block, h, edge_weight=block.edata['edge_weights'] if 'edge_weights' in block.edata else None)
-            if l != len(self.layers) - 1:
+            if l < len(self.layers) - 1:
                 h = self.activation(h)
                 h = self.dropout(h)
         return h
