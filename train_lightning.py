@@ -45,7 +45,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from torchmetrics.classification import MulticlassF1Score, MultilabelF1Score
 
 th.set_printoptions(profile="full")
-seed_everything(42)
+seed_everything(111)
 
 class SAGELightning(LightningModule):
     def __init__(
@@ -280,6 +280,10 @@ class DataModule(LightningDataModule):
         self.eta = eta
 
         g, n_classes, multilabel = load_dataset(dataset_name)
+        if not allow_zero_in_degree:
+            g = dgl.remove_self_loop(g)
+            g = dgl.add_self_loop(g)
+
         if undirected:
             src, dst = g.all_edges()
             g.add_edges(dst, src)

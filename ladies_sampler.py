@@ -108,14 +108,13 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
     
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
         output_nodes = seed_nodes
-        seed_nodes = torch.tensor(seed_nodes)
         blocks = []
         for block_id in reversed(range(len(self.nodes_per_layer))):
             num_nodes_to_sample = self.nodes_per_layer[block_id]
             W = g.edata[self.edge_weight]
             prob, insg = self.compute_prob(g, seed_nodes, W, num_nodes_to_sample)
             cand_nodes = insg.ndata[dgl.NID]
-            neighbor_nodes_idx = torch.tensor(self.select_neighbors(prob, num_nodes_to_sample))
+            neighbor_nodes_idx = self.select_neighbors(prob, num_nodes_to_sample)
             block = self.generate_block(
                 insg, neighbor_nodes_idx.type(g.idtype), seed_nodes.type(g.idtype), prob,
                 W[insg.edata[dgl.EID].long()])
@@ -130,7 +129,7 @@ class PoissonLadiesSampler(LadiesSampler):
         importance_sampling=True,
         weight="w",
         out_weight="edge_weights",
-        skip=False,
+        skip=True,
     ):
         super().__init__(
             nodes_per_layer, importance_sampling, weight, out_weight

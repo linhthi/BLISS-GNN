@@ -107,10 +107,8 @@ class GATv2(nn.Module):
         self.num_hidden = num_hidden
         self.num_classes = num_classes
         self.heads = heads
-        print('allow_zero_in_degree', allow_zero_in_degree)
-        if not allow_zero_in_degree:
-            allow_zero_in_degree = not allow_zero_in_degree
-            print('allow_zero_in_degree', allow_zero_in_degree)
+
+        allow_zero_in_degree = False
 
         if num_layers > 1:
             # input projection (no residual)
@@ -245,6 +243,7 @@ class SAGE(nn.Module):
                 h = self.dropout(h)
         return h
 
+    # TODO: check devices L290 h = layer(blocks[0], x)
     def inference(self, g, device, batch_size, use_uva, num_workers):
         """
         Inference with the GraphSAGE model on full neighbors (i.e. without neighbor sampling).

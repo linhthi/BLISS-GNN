@@ -45,7 +45,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         self.model = model
         # self.converge = [[] for _ in range(len(self.nodes_per_layer))]
     
-    def compute_prob(self, insg, edge_prob, num):
+    def compute_prob(self, insg, seed_nodes, edge_prob, num):
         r"""
         Args:
             insg (DGLGraph): subgraph of the seed nodes graph
@@ -400,7 +400,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             # print('exp3_prob', edge_prob, edge_prob.shape)
             # self.converge[block_id].append(edge_prob.tolist())
             # run compute_prob to get the unnormalized prob and subgraph
-            node_prob = self.compute_prob(insg, edge_prob, num_nodes_to_sample)
+            node_prob = self.compute_prob(insg, seed_nodes, edge_prob, num_nodes_to_sample)
             # print('node_prob', node_prob, )
             # get the edge prob from the original graph (exp3)
             W = edge_prob
@@ -428,7 +428,7 @@ class PoissonBanditLadiesSampler(BanditLadiesSampler):
             allow_zero_in_degree, model)
         self.eps = 0.9999
 
-    def compute_prob(self, insg, edge_prob, num):
+    def compute_prob(self, insg, seed_nodes, edge_prob, num):
         """
         g : the whole graph
         seed_nodes : the output nodes for the current layer
@@ -436,7 +436,7 @@ class PoissonBanditLadiesSampler(BanditLadiesSampler):
         return : the unnormalized probability of the candidate nodes, as well as the subgraph
                  containing all the edges from the candidate nodes to the output nodes.
         """
-        prob = super().compute_prob(insg, edge_prob, num)
+        prob = super().compute_prob(insg, seed_nodes, edge_prob, num)
 
         one = torch.ones_like(prob)
         if prob.shape[0] <= num:
@@ -449,6 +449,9 @@ class PoissonBanditLadiesSampler(BanditLadiesSampler):
                 break
             else:
                 c *= num / S
+
+        skip_nodes = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
+        prob[skip_nodes] = float("inf")
 
         return torch.minimum(prob * c, one)
 
