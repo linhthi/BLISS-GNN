@@ -30,7 +30,7 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import numpy as np
 
 from ladies_sampler import LadiesSampler, PoissonLadiesSampler
@@ -45,7 +45,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from torchmetrics.classification import MulticlassF1Score, MultilabelF1Score
 
 th.set_printoptions(profile="full")
-seed_everything(111)
+
 
 class SAGELightning(LightningModule):
     def __init__(
@@ -510,6 +510,7 @@ if __name__ == "__main__":
     argparser.add_argument("--batch-size", type=int, default=1000)
     argparser.add_argument("--lr", type=float, default=0.001)
     argparser.add_argument("--dropout", type=float, default=0.5)
+    argparser.add_argument("--seed", type=int, default=123)
     argparser.add_argument(
         "--num-workers",
         type=int,
@@ -541,6 +542,8 @@ if __name__ == "__main__":
     argparser.add_argument("--disable-checkpoint", action="store_true")
     argparser.add_argument("--precision", type=str, default="highest")
     args = argparser.parse_args()
+
+    seed_everything(args.seed)
 
     if args.precision != "highest":
         th.set_float32_matmul_precision(args.precision)
@@ -613,7 +616,7 @@ if __name__ == "__main__":
         )
     )
 
-    subdir = "{}_{}_{}_steps_{}_bs_{}_layers_{}_lr_{}_eta_{}".format(
+    subdir = "{}_{}_{}_steps_{}_bs_{}_layers_{}_lr_{}_eta_{}_seed_{}".format(
         args.model,
         args.dataset,
         args.sampler,
@@ -621,7 +624,8 @@ if __name__ == "__main__":
         args.batch_size,
         args.num_layers,
         args.lr,
-        args.eta
+        args.eta,
+        args.seed
     )
     logger = TensorBoardLogger(args.logdir, name=subdir)
     trainer = Trainer(
@@ -641,6 +645,8 @@ if __name__ == "__main__":
         dirs = glob.glob("./{}/*".format(logdir))
         version = max([int(os.path.split(x)[-1].split("_")[-1]) for x in dirs])
         logdir = "./{}/version_{}".format(logdir, version)
+        result_file = os.path.join(logdir, "results.txt")
+        result_writer = open(result_file, 'w')
         print("Evaluating model in", logdir)
         ckpt = glob.glob(os.path.join(logdir, "checkpoints", "*"))[0]
 
@@ -673,3 +679,4 @@ if __name__ == "__main__":
             f1score = model.f1score_class().to(pred.device)
             acc = f1score(pred_nid, label)
             print(f"{split_name} accuracy: {acc.item()}")
+            result_writer.write(f"{split_name} accuracy: {acc.item()}\n")
