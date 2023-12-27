@@ -427,6 +427,7 @@ class PoissonBanditLadiesSampler(BanditLadiesSampler):
             node_embedding, node_prob, replace, eta, num_steps,
             allow_zero_in_degree, model)
         self.eps = 0.9999
+        self.allow_zero_in_degree = allow_zero_in_degree
 
     def compute_prob(self, insg, seed_nodes, edge_prob, num):
         """
@@ -449,7 +450,7 @@ class PoissonBanditLadiesSampler(BanditLadiesSampler):
                 break
             else:
                 c *= num / S
-
+        # if not self.allow_zero_in_degree:
         skip_nodes = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
         prob[skip_nodes] = float("inf")
 

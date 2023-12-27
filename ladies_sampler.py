@@ -23,13 +23,14 @@ def normalized_edata(g, weight=None):
         return g.edata['w']
 
 class LadiesSampler(dgl.dataloading.BlockSampler):
-    def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights', replace=False):
+    def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights', replace=False, allow_zero_in_degree=False):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
         self.importance_sampling = importance_sampling
         self.edge_weight = weight
         self.output_weight = out_weight
         self.replace = replace
+        self.allow_zero_in_degree = allow_zero_in_degree
     
     def compute_prob(self, g, seed_nodes, weight, num):
         """
@@ -129,13 +130,13 @@ class PoissonLadiesSampler(LadiesSampler):
         importance_sampling=True,
         weight="w",
         out_weight="edge_weights",
-        skip=True,
+        allow_zero_in_degree=False,
     ):
         super().__init__(
-            nodes_per_layer, importance_sampling, weight, out_weight
+            nodes_per_layer, importance_sampling, weight, out_weight, allow_zero_in_degree
         )
         self.eps = 0.9999
-        self.skip = skip
+        self.allow_zero_in_degree = allow_zero_in_degree
 
     def compute_prob(self, g, seed_nodes, weight, num):
         """
@@ -159,9 +160,9 @@ class PoissonLadiesSampler(LadiesSampler):
             else:
                 c *= num / S
 
-        if self.skip:
-            skip_nodes = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
-            prob[skip_nodes] = float("inf")
+        # if not self.allow_zero_in_degree:
+        skip_nodes = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
+        prob[skip_nodes] = float("inf")
 
         return torch.minimum(prob * c, one), insg
 
