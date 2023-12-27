@@ -466,6 +466,7 @@ if __name__ == "__main__":
     argparser.add_argument("--batch-size", type=int, default=1000)
     argparser.add_argument("--lr", type=float, default=0.001)
     argparser.add_argument("--dropout", type=float, default=0.5)
+    argparser.add_argument("--seed", type=int, default=123)
     argparser.add_argument(
         "--num-workers",
         type=int,
@@ -498,6 +499,8 @@ if __name__ == "__main__":
     argparser.add_argument("--precision", type=str, default="highest")
     argparser.add_argument("--k-runs", type=int, default=1)
     args = argparser.parse_args()
+
+    seed_everything(args.seed)
 
     if args.precision != "highest":
         th.set_float32_matmul_precision(args.precision)
