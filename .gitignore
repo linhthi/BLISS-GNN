@@ -128,4 +128,6 @@ lightning_logs/
 MNIST
 .DS_Store
 tb_logs/
+tb_logs_reduced/
+tmp/
 toy.ipynb

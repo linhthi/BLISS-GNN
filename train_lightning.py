@@ -30,22 +30,20 @@ import torch as th
 import torch.nn as nn
 import torch.nn.functional as F
 
-import matplotlib.pyplot as plt
-import numpy as np
-
 from ladies_sampler import LadiesSampler, PoissonLadiesSampler
 from bandit_sampler import BanditLadiesSampler, PoissonBanditLadiesSampler, normalized_edata
 
 from load_graph import load_dataset
 from model import SAGE, GATv2
-from pytorch_lightning import LightningDataModule, LightningModule, Trainer, seed_everything
+from pytorch_lightning import LightningDataModule, LightningModule, Trainer
 from pytorch_lightning.callbacks import Callback, EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from torchmetrics.classification import MulticlassF1Score, MultilabelF1Score
+import pandas as pd
+import matplotlib.pyplot as plt
+import tensorboard_reducer as tbr
 
-th.set_printoptions(profile="full")
-seed_everything(111)
+from torchmetrics.classification import MulticlassF1Score, MultilabelF1Score
 
 class SAGELightning(LightningModule):
     def __init__(
@@ -261,15 +259,15 @@ class DataModule(LightningDataModule):
         undirected,
         data_cpu=False,
         use_uva=False,
-        fan_out=[10, 25],
+        fan_out=[128, 256],
         eta=0.4,
         device=th.device("cpu"),
-        batch_size=1000,
+        batch_size=64,
         num_workers=4,
         sampler="bandit",
         importance_sampling=1,
         cache_size=0,
-        num_steps=5000,
+        num_steps=500,
         allow_zero_in_degree=False,
         model='sage',
     ):
@@ -280,9 +278,9 @@ class DataModule(LightningDataModule):
         self.eta = eta
 
         g, n_classes, multilabel = load_dataset(dataset_name)
-        if not allow_zero_in_degree:
-            g = dgl.remove_self_loop(g)
-            g = dgl.add_self_loop(g)
+        # if not allow_zero_in_degree:
+        g = dgl.remove_self_loop(g)
+        g = dgl.add_self_loop(g)
 
         if undirected:
             src, dst = g.all_edges()
@@ -435,48 +433,6 @@ class BatchSizeCallback(Callback):
             loop._combined_loader = None
             loop.setup_data()
             self.clear()
-    
-    # def on_train_end(self, trainer, datamodule):
-    #     if 'bandit' in trainer.datamodule.sampler_name:
-    #         for layer_id in range(len(trainer.datamodule.sampler.converge)):
-    #             y = trainer.datamodule.sampler.converge[layer_id]
-    #             x = range(0, len(y))
-    #             f1 = plt.figure(layer_id)
-    #             for i in range(len(y[0])):
-    #                 plt.plot(x,[pt[i] for pt in y], label = 'edge_%s'%i)
-    #             plt.grid()
-    #             plt.legend()
-    #         # f2 = plt.figure(2)
-    #         # plt.plot(self.inc_sin_0, label='edge_0')
-    #         # plt.plot(self.dec_sin_1, label='edge_1')
-    #         # plt.plot(self.inc_sin_2, label='edge_2')
-    #         # plt.plot(self.dec_sin_3, label='edge_3')
-    #         # plt.grid()
-    #         # plt.legend()
-    #         plt.show(block=True)
-
-    #     if ('ladies' in trainer.datamodule.sampler_name) or ('bandit' in trainer.datamodule.sampler_name):
-    #         y_v = trainer.datamodule.sampler.converge_v
-    #         # w = y_v.unique(return_counts=True)[1]/len(y_v)
-    #         # print(y_v[-1], [i/sum(y_v[-1]) for i in y_v[-1]])
-    #         x_v = range(0, len(y_v))
-    #         f1 = plt.figure('node_prob')
-    #         for i in range(len(y_v[0])):
-    #             plt.plot(x_v,[pt[i]/sum(pt) for pt in y_v], label = 'node_%s'%i)
-    #         plt.grid()
-    #         plt.legend()
-            
-    #         y_e = trainer.datamodule.sampler.converge_e
-    #         # w = y_e.unique(return_counts=True)[1]/len(y_e)
-    #         # print(y_e[-1], [i/sum(y_e[-1]) for i in y_e[-1]])
-    #         x_e = range(0, len(y_e))
-    #         f2 = plt.figure('edge_prob')
-    #         for i in range(len(y_e[0])):
-    #             plt.plot(x_e,[pt[i]/sum(pt) for pt in y_e], label = 'edge_%s'%i)
-    #         plt.grid()
-    #         plt.legend()
-    #         plt.show(block=True)
-
 
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser()
@@ -537,9 +493,10 @@ if __name__ == "__main__":
     argparser.add_argument("--cache-size", type=int, default=0)
     argparser.add_argument("--undirected", action="store_true")
     argparser.add_argument("--val-acc-target", type=float, default=1)
-    argparser.add_argument("--early-stopping-patience", type=int, default=100)
+    argparser.add_argument("--early-stopping-patience", type=int, default=1000)
     argparser.add_argument("--disable-checkpoint", action="store_true")
     argparser.add_argument("--precision", type=str, default="highest")
+    argparser.add_argument("--k-runs", type=int, default=1)
     args = argparser.parse_args()
 
     if args.precision != "highest":
@@ -549,127 +506,166 @@ if __name__ == "__main__":
         device = th.device("cuda:%d" % args.gpu)
     else:
         device = th.device("cpu")
-
-    datamodule = DataModule(
-        args.dataset,
-        args.undirected,
-        args.data_cpu,
-        args.use_uva,
-        [int(_) for _ in args.fan_out.split(",")],
-        args.eta,
-        device,
-        args.batch_size,
-        args.num_workers,
-        args.sampler,
-        args.importance_sampling,
-        args.cache_size,
-        args.num_steps,
-        args.allow_zero_in_degree,
-        args.model,
-    )
-
-    if 'gat' in args.model.lower():
-        model = GATv2Lightning(
-            datamodule.in_feats,
-            args.num_hidden,
-            datamodule.n_classes,
-            args.num_layers,
-            F.elu,
-            args.num_in_heads,
-            args.num_out_heads,
-            args.dropout,
-            args.attn_dropout,
-            args.negative_slope,
-            args.residual,
+    
+    # TODO: Add loop to get the avg of 10 exp
+    for run in range(args.k_runs):
+        datamodule = DataModule(
+            args.dataset,
+            args.undirected,
+            args.data_cpu,
+            args.use_uva,
+            [int(_) for _ in args.fan_out.split(",")],
+            args.eta,
+            device,
+            args.batch_size,
+            args.num_workers,
+            args.sampler,
+            args.importance_sampling,
+            args.cache_size,
+            args.num_steps,
             args.allow_zero_in_degree,
-            args.lr,
-            datamodule.multilabel,
+            args.model,
         )
-    else:
-        model = SAGELightning(
-            datamodule.in_feats,
-            args.num_hidden,
-            datamodule.n_classes,
-            args.num_layers,
-            F.relu,
-            args.dropout,
-            args.lr,
-            datamodule.multilabel,
-        )
-
-    # Train
-    callbacks = []
-    if not args.disable_checkpoint:
-        callbacks.append(
-            ModelCheckpoint(monitor="val_acc", save_top_k=1, mode="max")
-        )
-    callbacks.append(BatchSizeCallback(args.vertex_limit))
-    callbacks.append(
-        EarlyStopping(
-            monitor="val_acc",
-            stopping_threshold=args.val_acc_target,
-            mode="max",
-            patience=args.early_stopping_patience,
-        )
-    )
-
-    subdir = "{}_{}_{}_steps_{}_bs_{}_layers_{}_lr_{}_eta_{}".format(
-        args.model,
-        args.dataset,
-        args.sampler,
-        args.num_steps,
-        args.batch_size,
-        args.num_layers,
-        args.lr,
-        args.eta
-    )
-    logger = TensorBoardLogger(args.logdir, name=subdir)
-    trainer = Trainer(
-        accelerator="gpu" if args.gpu != -1 else "cpu",
-        devices=[args.gpu] if args.gpu != -1 else "auto",
-        max_epochs=args.num_epochs,
-        max_steps=args.num_steps,
-        # min_steps=args.min_steps,
-        callbacks=callbacks,
-        logger=logger,
-    )
-    trainer.fit(model, datamodule=datamodule)
-
-    # Test
-    if not args.disable_checkpoint:
-        logdir = os.path.join(args.logdir, subdir)
-        dirs = glob.glob("./{}/*".format(logdir))
-        version = max([int(os.path.split(x)[-1].split("_")[-1]) for x in dirs])
-        logdir = "./{}/version_{}".format(logdir, version)
-        print("Evaluating model in", logdir)
-        ckpt = glob.glob(os.path.join(logdir, "checkpoints", "*"))[0]
 
         if 'gat' in args.model.lower():
-            model = GATv2Lightning.load_from_checkpoint(
-                checkpoint_path=ckpt,
-                hparams_file=os.path.join(logdir, "hparams.yaml"),
-            ).to(device)
+            model = GATv2Lightning(
+                datamodule.in_feats,
+                args.num_hidden,
+                datamodule.n_classes,
+                args.num_layers,
+                F.elu,
+                args.num_in_heads,
+                args.num_out_heads,
+                args.dropout,
+                args.attn_dropout,
+                args.negative_slope,
+                args.residual,
+                args.allow_zero_in_degree,
+                args.lr,
+                datamodule.multilabel,
+            )
         else:
-            model = SAGELightning.load_from_checkpoint(
-                checkpoint_path=ckpt,
-                hparams_file=os.path.join(logdir, "hparams.yaml"),
-            ).to(device)
-    with th.no_grad():
-        graph = datamodule.g
-        pred = model.module.inference(
-            graph,
-            f"cuda:{args.gpu}" if args.gpu != -1 else "cpu",
-            4096,
-            args.use_uva,
-            args.num_workers,
+            model = SAGELightning(
+                datamodule.in_feats,
+                args.num_hidden,
+                datamodule.n_classes,
+                args.num_layers,
+                F.relu,
+                args.dropout,
+                args.lr,
+                datamodule.multilabel,
+            )
+
+        # Train
+        callbacks = []
+        if not args.disable_checkpoint:
+            callbacks.append(
+                ModelCheckpoint(monitor="val_acc", save_top_k=1, mode="max")
+            )
+        callbacks.append(BatchSizeCallback(args.vertex_limit))
+        callbacks.append(
+            EarlyStopping(
+                monitor="val_acc",
+                stopping_threshold=args.val_acc_target,
+                mode="max",
+                patience=args.early_stopping_patience,
+            )
         )
-        for nid, split_name in zip(
-            [datamodule.train_nid, datamodule.val_nid, datamodule.test_nid],
-            ["Train", "Validation", "Test"],
-        ):
-            nid = nid.to(pred.device).long()
-            pred_nid = pred[nid]
-            label = graph.ndata["labels"][nid]
-            f1score = model.f1score_class().to(pred.device)
-            acc = f1score(pred_nid, label)
-            print(f"{split_name} accuracy: {acc.item()}")
+
+        subdir = "{}_{}_{}_steps_{}_bs_{}_layers_{}_lr_{}_eta_{}".format(
+            args.model,
+            args.dataset,
+            args.sampler,
+            args.num_steps,
+            args.batch_size,
+            args.num_layers,
+            args.lr,
+            args.eta
+        )
+        logger = TensorBoardLogger(args.logdir, name=subdir)
+        trainer = Trainer(
+            accelerator="gpu" if args.gpu != -1 else "cpu",
+            devices=[args.gpu] if args.gpu != -1 else "auto",
+            max_epochs=args.num_epochs,
+            max_steps=args.num_steps,
+            # min_steps=args.min_steps,
+            callbacks=callbacks,
+            logger=logger,
+        )
+
+
+        trainer.fit(model, datamodule=datamodule)
+
+        # Test
+        if not args.disable_checkpoint:
+            logdir = os.path.join(args.logdir, subdir)
+            dirs = glob.glob("./{}/*".format(logdir))
+            version = max([int(os.path.split(x)[-1].split("_")[-1]) for x in dirs])
+            logdir = "./{}/version_{}".format(logdir, version)
+            print("Evaluating model in", logdir)
+            ckpt = glob.glob(os.path.join(logdir, "checkpoints", "*"))[0]
+
+            if 'gat' in args.model.lower():
+                model = GATv2Lightning.load_from_checkpoint(
+                    checkpoint_path=ckpt,
+                    hparams_file=os.path.join(logdir, "hparams.yaml"),
+                ).to(device)
+            else:
+                model = SAGELightning.load_from_checkpoint(
+                    checkpoint_path=ckpt,
+                    hparams_file=os.path.join(logdir, "hparams.yaml"),
+                ).to(device)
+        with th.no_grad():
+            graph = datamodule.g
+            pred = model.module.inference(
+                graph,
+                f"cuda:{args.gpu}" if args.gpu != -1 else "cpu",
+                1024,
+                args.use_uva,
+                args.num_workers,
+            )
+            for nid, split_name in zip(
+                [datamodule.train_nid, datamodule.val_nid, datamodule.test_nid],
+                ["Train", "Validation", "Test"],
+            ):
+                nid = nid.to(pred.device).long()
+                pred_nid = pred[nid]
+                label = graph.ndata["labels"][nid].to(pred.device)
+                f1score = model.f1score_class().to(pred.device)
+                acc = f1score(pred_nid, label)
+                print(f"{split_name} accuracy: {acc.item()}")
+    
+    if args.k_runs > 1:
+        # print how many tb logs are there to get the mean, max, min, std on.
+        input_event_dirs = sorted(glob.glob(f"{os.path.join(args.logdir, subdir)}/*"))
+        print(f"Found {len(input_event_dirs)}")
+
+        events_out_dir = f"{args.logdir}_reduced/{subdir}_{len(input_event_dirs)}"
+        csv_out_path = f"{args.logdir}_reduced/{subdir}_{len(input_event_dirs)}.csv"
+        overwrite = True
+        reduce_ops = ("mean", "min", "max", "std")
+
+        events_dict = tbr.load_tb_events(
+            input_event_dirs, verbose=True, handle_dup_steps='mean')
+        
+        reduced_events = tbr.reduce_events(events_dict, reduce_ops, verbose=True)
+
+        for op in reduce_ops:
+            print(f"Writing '{op}' reduction to '{events_out_dir}-{op}'")
+
+        tbr.write_tb_events(reduced_events, events_out_dir, overwrite, verbose=True)
+        print(f"Writing results to '{csv_out_path}'")
+        tbr.write_data_file(reduced_events, csv_out_path, overwrite, verbose=True)
+        print("✓ Reduction complete")
+
+        df_reduced_results = pd.read_csv(csv_out_path, header=[0, 1])
+        y = df_reduced_results['val_acc'].bfill()['mean']
+        std = df_reduced_results['val_acc'].bfill()['std']
+
+        plt.xlabel('Step')
+        plt.ylabel('Average Validation Accuracy')
+        plt.plot(y)
+        plt.fill_between(range(len(y)), y+std, y-std, alpha=0.2)
+        # Show the plot
+        plt.grid()
+        plt.show(block=True)
