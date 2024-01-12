@@ -507,7 +507,6 @@ if __name__ == "__main__":
     else:
         device = th.device("cpu")
     
-    # TODO: Add loop to get the avg of 10 exp
     for run in range(args.k_runs):
         datamodule = DataModule(
             args.dataset,
@@ -634,38 +633,3 @@ if __name__ == "__main__":
                 f1score = model.f1score_class().to(pred.device)
                 acc = f1score(pred_nid, label)
                 print(f"{split_name} accuracy: {acc.item()}")
-    
-    if args.k_runs > 1:
-        # print how many tb logs are there to get the mean, max, min, std on.
-        input_event_dirs = sorted(glob.glob(f"{os.path.join(args.logdir, subdir)}/*"))
-        print(f"Found {len(input_event_dirs)}")
-
-        events_out_dir = f"{args.logdir}_reduced/{subdir}_{len(input_event_dirs)}"
-        csv_out_path = f"{args.logdir}_reduced/{subdir}_{len(input_event_dirs)}.csv"
-        overwrite = True
-        reduce_ops = ("mean", "min", "max", "std")
-
-        events_dict = tbr.load_tb_events(
-            input_event_dirs, verbose=True, handle_dup_steps='mean')
-        
-        reduced_events = tbr.reduce_events(events_dict, reduce_ops, verbose=True)
-
-        for op in reduce_ops:
-            print(f"Writing '{op}' reduction to '{events_out_dir}-{op}'")
-
-        tbr.write_tb_events(reduced_events, events_out_dir, overwrite, verbose=True)
-        print(f"Writing results to '{csv_out_path}'")
-        tbr.write_data_file(reduced_events, csv_out_path, overwrite, verbose=True)
-        print("✓ Reduction complete")
-
-        df_reduced_results = pd.read_csv(csv_out_path, header=[0, 1])
-        y = df_reduced_results['val_acc'].bfill()['mean']
-        std = df_reduced_results['val_acc'].bfill()['std']
-
-        plt.xlabel('Step')
-        plt.ylabel('Average Validation Accuracy')
-        plt.plot(y)
-        plt.fill_between(range(len(y)), y+std, y-std, alpha=0.2)
-        # Show the plot
-        plt.grid()
-        plt.show(block=True)
