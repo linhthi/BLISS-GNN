@@ -534,8 +534,8 @@ if __name__ == "__main__":
     if 'ladies' in args.sampler:
         etas = [0.0001]
     else:
-        etas = [0.1, 0.5]
-        # etas = [0.0001, 0.4000, 0.9999]
+        # etas = [0.1, 0.5]
+        etas = [0.0001, 0.4000, 0.9999]
     for eta in etas:
         for run in range(args.k_runs):
             print('='*20 + f'run_{run+1} for eta_{eta}' + '='*20)
