@@ -64,21 +64,21 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             DGLBlock: subgraph containing all the edges from the candidate nodes to the output nodes.
         """
         if self.importance_sampling:
-          # \sum_{k\in\mathcal{N}_i}q_{ik}, calc sum of q_ij over j (to get i sum)
-          edge_prob_sum = dgl.ops.copy_e_sum(insg, edge_prob)
-          # reverse the edges (top-down)
-          out_frontier = dgl.reverse(insg, copy_edata=True)
-          # \frac{q_{ij}}{weight_sum}
-          edge_prob_div_sum = dgl.ops.e_div_u(out_frontier, edge_prob, edge_prob_sum)          
-          # \sum_{i} (weight_div_sum)^2, prob for each node
-          prob = dgl.ops.copy_e_sum(out_frontier, edge_prob_div_sum ** 2)
-          # \sqrt{prob}, take the square root to follow the importance sampling equation
-          prob = torch.sqrt(prob)
+            # \sum_{k\in\mathcal{N}_i}q_{ik}, calc sum of q_ij over j (to get i sum)
+            edge_prob_sum = dgl.ops.copy_e_sum(insg, edge_prob)
+            # reverse the edges (top-down)
+            out_frontier = dgl.reverse(insg, copy_edata=True)
+            # \frac{q_{ij}}{weight_sum}
+            edge_prob_div_sum = dgl.ops.e_div_u(out_frontier, edge_prob, edge_prob_sum)          
+            # \sum_{i} (weight_div_sum)^2, prob for each node
+            prob = dgl.ops.copy_e_sum(out_frontier, edge_prob_div_sum ** 2)
+            # \sqrt{prob}, take the square root to follow the importance sampling equation
+            prob = torch.sqrt(prob)
         else:
-          # prob for choosing any neighbor is 1
-          prob = torch.ones(insg.num_nodes())
-          # set the non neighboring nodes to 0
-          prob[insg.out_degrees() == 0] = 0
+            # prob for choosing any neighbor is 1
+            prob = torch.ones(insg.num_nodes()).to(insg.device)
+            # set the non neighboring nodes to 0
+            prob[insg.out_degrees() == 0] = 0
         return prob
     
     def select_neighbors(self, prob, num):
@@ -252,41 +252,36 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
 
         # Calculate the delta value for exp3
         # delta: \sqrt{\frac{(1 - \eta) \eta^4 k^5 \ln(\frac{n}{k})}{T n^4}}
-        nom = (1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i)
-        dom = (self.T*n_i**4)
-        delta = torch.sqrt(nom/dom)
-        delta = torch.nan_to_num(delta)
-        # print('delta', delta)
+        # nom = (1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i)
+        # dom = (self.T*n_i**4)
+        # delta = torch.sqrt(nom/dom)
+        # delta = torch.nan_to_num(delta)
+        # print('delta', delta.topk(5))
 
         # delta = self.eta / n_i**2
-        # delta = self.eta / 100
+        delta = self.eta #/ 10000
         # delta = 0.01
 
         # The rewards obtained for each node in the previous iteration
         rewards = mfg.edata['rewards'].clone().detach()
-        # print()
-        # print('+'*50)
-        # print('rewards=========', rewards.min().tolist(), rewards.max().tolist())
         # Unnormalized probability distribution of nodes in the current subgraph.
         prob = mfg.srcdata[self.node_prob].clone().detach()
         # \hat{r}_{ij} = \frac{r_{ij}}{p_i}, Compute rewards_hat by dividing rewards by node probabilities
         rewards_hat = dgl.ops.e_div_u(mfg, rewards, prob)
-        # print('rewards_hat=========', rewards_hat.min().tolist(), rewards_hat.max().tolist())
         # \frac{\delta \hat{r}_{ij}}{k p_i}, compute delta_reward for edges
         delta_reward = dgl.ops.e_mul_v(mfg, rewards_hat, delta / n_i)
-        # print('delta_reward=========', delta_reward.min().tolist(), delta_reward.max().tolist())
-        # print('+'*50)
-        # print('delta_reward', delta_reward.max())
-        # # limit delta_reward to 1
-        # delta_reward[delta_reward > 1] = 1
+        # limit delta_reward to 1
+        delta_reward[delta_reward > 1] = 1
         # \exp(\frac{\delta \hat{r}_{ij}}{k p_i}), take exp of delta_reward
         exp_rewards = torch.exp(delta_reward)
         # update weights
         self.exp3_weights[idx][mfg.edata[dgl.EID].long()] *= exp_rewards
+        self.exp3_weights[idx] = torch.nn.functional.normalize(self.exp3_weights[idx], p=1, dim=0)
+
     
     def exp3(self, mfgs, g):
         """
-        EXP3 algorhim execution after doing feed-forward, to get the node embeddings
+        EXP3 algorithm execution after doing feed-forward, to get the node embeddings
         of the last iteration. 
 
         Args:
