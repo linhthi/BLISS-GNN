@@ -3,7 +3,6 @@ import dgl.function as fn
 import dgl
 import torch
 
-
 def find_indices_in(a, b):
     b_sorted, indices = torch.sort(b)
     sorted_indices = torch.searchsorted(b_sorted, a)

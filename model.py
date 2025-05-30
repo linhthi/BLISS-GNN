@@ -9,7 +9,6 @@ import dgl.nn as dglnn
 import dgl.function as fn
 from dgl.base import DGLError
 
-
 # source: https://github.com/dmlc/dgl/tree/master/examples/pytorch/gatv2
 class custom_GATv2Conv(dglnn.GATv2Conv):
     def forward(self, graph, feat, edge_weight=None, get_attention=False):

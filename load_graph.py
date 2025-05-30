@@ -9,8 +9,7 @@ def load_data(data):
     return g, data.num_classes
 
 def load_dgl(name):
-    from dgl.data import CoraGraphDataset, CiteseerGraphDataset, PubmedGraphDataset, RedditDataset, YelpDataset, FlickrDataset, ActorDataset
-
+    from dgl.data import CoraGraphDataset, CiteseerGraphDataset, PubmedGraphDataset, RedditDataset, YelpDataset, FlickrDataset
     d = {
         'cora': CoraGraphDataset,
         'citeseer': CiteseerGraphDataset,
@@ -18,7 +17,6 @@ def load_dgl(name):
         'reddit': RedditDataset,
         'yelp': YelpDataset,
         'flickr': FlickrDataset,
-        'actor': ActorDataset
     }
 
     return load_data(d[name]())

@@ -26,7 +26,7 @@ def normalized_edata(g, weight=None):
         g.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
         return g.edata['w'] * g.edata[weight]
 
-class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
+class BanditLadiesSampler(dgl.dataloading.BlockSampler):
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
                  node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
                  model='sage'):
@@ -219,7 +219,6 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         """
         # Number of nodes to select in each iteration (sample size or number of arms).
         k_i = mfg.in_degrees()[:len(mfg.dstdata[dgl.NID].long())].bfloat16()
-        # print(k_i, k_i.sum())
         # Number of nodes in the current subgraph (neighbor of a node or degree)
         n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()].bfloat16()
 

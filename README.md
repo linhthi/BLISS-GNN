@@ -13,7 +13,7 @@ $ pip install -r requirements.txt
 ```
 or check latest version of [torch](https://www.dgl.ai/pages/start.html) and the combatible version of [dgl](https://www.dgl.ai/pages/start.html) for it. The used version in this project torch\==2.7.0 and dgl\==2.2.1
 
-## How to run
+## How to Run
 ```sh
 $ python train_lightning.py --num-steps 1000 --dataset pubmed --batch-size 32 --num-layers 3 --fan-out 512,256,128 --lr 0.002 --residual --k-runs 5 --sampler poisson-bandit --model sage
 ```
