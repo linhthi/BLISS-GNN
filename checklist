@@ -1,4 +1,0 @@
-I have fix the code to work with the bandit sampler for gat model
-I have a question on the usage of alpha, the alpha is attention score and it depend on the number of head.
-I assign to a_ij in our methods by take mean of attention score of heads.
-I wonder is it true, or we need use other like take max.
