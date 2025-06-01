@@ -4,13 +4,12 @@ from dgl.data import DGLDataset
 
 def load_data(data):
     g = data[0]
-    g.ndata['features'] = g.ndata.pop('feat')
+    g.ndata['features'] = g.ndata.pop('feat').bfloat16()
     g.ndata['labels'] = g.ndata.pop('label')
     return g, data.num_classes
 
 def load_dgl(name):
-    from dgl.data import CoraGraphDataset, CiteseerGraphDataset, PubmedGraphDataset, RedditDataset, YelpDataset, FlickrDataset, ActorDataset
-
+    from dgl.data import CoraGraphDataset, CiteseerGraphDataset, PubmedGraphDataset, RedditDataset, YelpDataset, FlickrDataset
     d = {
         'cora': CoraGraphDataset,
         'citeseer': CiteseerGraphDataset,
@@ -18,7 +17,6 @@ def load_dgl(name):
         'reddit': RedditDataset,
         'yelp': YelpDataset,
         'flickr': FlickrDataset,
-        'actor': ActorDataset
     }
 
     return load_data(d[name]())
@@ -41,7 +39,7 @@ def load_ogb(name, root="dataset"):
     graph, labels = data[0]
     labels = labels[:, 0]
 
-    graph.ndata['features'] = graph.ndata.pop('feat')
+    graph.ndata['features'] = graph.ndata.pop('feat').bfloat16()
     num_labels = len(th.unique(labels[th.logical_not(th.isnan(labels))]))
     graph.ndata['labels'] = labels.type(th.LongTensor)
     in_feats = graph.ndata['features'].shape[1]

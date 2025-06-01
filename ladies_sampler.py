@@ -3,7 +3,6 @@ import dgl.function as fn
 import dgl
 import torch
 
-
 def find_indices_in(a, b):
     b_sorted, indices = torch.sort(b)
     sorted_indices = torch.searchsorted(b_sorted, a)
@@ -17,7 +16,7 @@ def normalized_edata(g, weight=None):
     with g.local_scope():
         if weight is None:
             weight = 'W'
-            g.edata[weight] = torch.ones(g.number_of_edges(), device=g.device)
+            g.edata[weight] = torch.ones(g.number_of_edges(), device=g.device).bfloat16()
         g.update_all(fn.copy_e(weight, weight), fn.sum(weight, 'v'))
         g.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
         return g.edata['w']
@@ -95,7 +94,7 @@ class LadiesSampler(dgl.dataloading.BlockSampler):
         W_tilde = dgl.ops.e_div_u(sg, W, P)
         W_tilde_sum = dgl.ops.copy_e_sum(sg, W_tilde)
         d = sg.in_degrees()
-        W_tilde = dgl.ops.e_mul_v(sg, W_tilde, d / W_tilde_sum)
+        W_tilde = dgl.ops.e_mul_v(sg, W_tilde, (d / 1.0).bfloat16())
 
         block = dgl.to_block(sg, seed_nodes_idx.type(sg.idtype))
         block.edata[self.output_weight] = W_tilde
@@ -159,8 +158,6 @@ class PoissonLadiesSampler(LadiesSampler):
                 break
             else:
                 c *= num / S
-
-        # if not self.allow_zero_in_degree:
         skip_nodes = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
         prob[skip_nodes] = float("inf")
 

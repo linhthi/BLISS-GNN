@@ -21,15 +21,15 @@ def normalized_edata(g, weight=None):
     with g.local_scope():
         if weight is None:
             weight = 'W'
-            g.edata[weight] = torch.ones(g.number_of_edges(), device=g.device)
+            g.edata[weight] = torch.ones(g.number_of_edges(), device=g.device).bfloat16()
         g.update_all(dgl.function.copy_e(weight, weight), dgl.function.sum(weight, 'v'))
         g.apply_edges(lambda edges: {'w': 1 / edges.dst['v']})
         return g.edata['w'] * g.edata[weight]
 
-class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbiased node embedding and edge_weights
+class BanditLadiesSampler(dgl.dataloading.BlockSampler):
     def __init__(self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
                  node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
-                 allow_zero_in_degree=False, model='sage'):
+                 model='sage'):
         super().__init__()
         self.nodes_per_layer = nodes_per_layer
         self.importance_sampling = importance_sampling
@@ -41,7 +41,6 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         self.eta = eta
         self.T = num_steps
         self.exp3_weights = None
-        self.allow_zero_in_degree = allow_zero_in_degree
         self.model = model
         # self.converge = [[] for _ in range(len(self.nodes_per_layer))]
     
@@ -74,9 +73,10 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             prob = dgl.ops.copy_e_sum(out_frontier, edge_prob_div_sum ** 2)
             # \sqrt{prob}, take the square root to follow the importance sampling equation
             prob = torch.sqrt(prob)
+            # prob = torch.nn.functional.normalize(prob, p=1, dim=0)
         else:
             # prob for choosing any neighbor is 1
-            prob = torch.ones(insg.num_nodes()).to(insg.device)
+            prob = torch.ones(insg.num_nodes()).to(insg.device).bfloat16()
             # set the non neighboring nodes to 0
             prob[insg.out_degrees() == 0] = 0
         return prob
@@ -126,50 +126,35 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # update weights (w_ij)
         exp_weights = self.exp3_weights[idx][insg.edata[dgl.EID].long()]
         # \sum_{j} w_{ij}, sum of weights per node
-        # print('exp_weights', exp_weights, exp_weights.shape)
         exp3_weights_sum = dgl.ops.copy_e_sum(insg, exp_weights)
-        # print('exp3_weights_sum', exp3_weights_sum, exp3_weights_sum.shape)
         # \frac{w_{ij}}{exp3_weights_sum}, divide exp_weights over exp_weights_sum
         exp_weights_divided = dgl.ops.e_div_v(insg, exp_weights, exp3_weights_sum)
-        # print('exp_weights_divided', exp_weights_divided, exp_weights_divided.shape)
         # number of edges incoming to the seed node (degree)
         n_i = g.in_degrees(insg.srcdata[dgl.NID])
-        # print('\nni', n_i, n_i.shape)
-        # print('\nni_2', g.in_degrees(insg.dstdata[dgl.NID]), g.in_degrees(insg.dstdata[dgl.NID]).shape)
-        # print('\nni_3', g.in_degrees()[insg.dstdata[dgl.NID].long()], g.in_degrees()[insg.dstdata[dgl.NID].long()].shape)
-        # print('\nni_2', (g.in_degrees()[insg.srcdata[dgl.NID].long()] == n_i).all())
 
         # update edge prob 
         # (1 - \eta) {exp_weights_divided} + \frac{\eta}{k}
-        edge_prob = dgl.ops.v_add_e(insg, (self.eta / n_i), (1 - self.eta) * (exp_weights_divided)) 
-        # print('edge_prob', edge_prob, edge_prob.shape)
+        edge_prob = dgl.ops.v_add_e(insg, (self.eta / n_i).bfloat16(), (1 - self.eta) * (exp_weights_divided)) 
         return edge_prob, insg
     
     def calculate_alpha(self, mfg):
         '''
         STEP_05
 
-        alpha is the original graph weights (constant for GraphSAGE)
+        alpha is the original graph weights (constant for GraphSAGE and GCN)
         '''
-        if self.model == 'sage':
+        if self.model == 'gat':
+            # \alpha^\prime_{ij} = \sum_{j \in S_i} q_{ij} \cdot \frac{\tilde{\alpha}_{ij}}{\sum{j \in S_i} \tilde{\alpha}_{ij}}
+            q_ij = mfg.edata['q_ij']
+            attention = mfg.edata['a_ij']
+            q_ij_sum = dgl.ops.copy_e_sum(mfg, q_ij)
+            attention_sum = dgl.ops.copy_e_sum(mfg, attention)
+            attention_div_attention_sum = dgl.ops.e_div_v(mfg, attention, attention_sum) # [!] _u?
+            attention_div_attention_sum = torch.nan_to_num(attention_div_attention_sum)
+            alpha = dgl.ops.e_dot_v(mfg, attention_div_attention_sum, q_ij_sum)
+        else:
             # alpha
             alpha = mfg.edata[self.edge_weight]
-        elif self.model == 'gat':
-            # # print('len nodes', mfg.srcdata['labels'].shape)
-            q_ij = mfg.edata['q_ij']
-            # # print('q_ij', q_ij, q_ij.shape)
-            attention = mfg.edata['a_ij']
-            # # print('attention', attention, attention.shape)
-            q_ij_sum = dgl.ops.copy_e_sum(mfg, q_ij)
-            # # print('q_ij_sum', q_ij_sum, q_ij_sum.shape)
-            attention_sum = dgl.ops.copy_e_sum(mfg, attention)
-            # # print('attention_sum', attention_sum, attention_sum.shape)
-            attention_div_attention_sum = dgl.ops.e_div_v(mfg, attention, attention_sum) # [!] _u?
-            # print('attention_div_attention_sum', attention_div_attention_sum, attention_div_attention_sum.shape)
-            attention_div_attention_sum = torch.nan_to_num(attention_div_attention_sum)
-            # print('attention_div_attention_sum', attention_div_attention_sum, attention_div_attention_sum.shape)
-            alpha = dgl.ops.e_dot_v(mfg, attention_div_attention_sum, q_ij_sum)
-            # # print('alpha', alpha, alpha.shape)
         return alpha
 
     def calculate_rewards(self, idx, mfg, g, alpha):
@@ -191,33 +176,20 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         Returns:
             DGLBlock: the mfgs after adding reward for each edge to each of mfgs 
         """
-        # # n_i is number of nodes in the subgraph (sample size or number of arms)
-        # n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
-
         # Number of nodes to select in each iteration (sample size or number of arms).
-        k_i = mfg.in_degrees()[:len(mfg.dstdata[dgl.NID])]
-        # print('\nki', k_i, k_i.shape)
-        
+        k_i = mfg.in_degrees()[:len(mfg.dstdata[dgl.NID])].bfloat16()
         # calculate \|h_j\| (node embedding norm)
         h_j_norm = mfg.srcdata['embed_norm']
-        # print('h_j_norm.shape', h_j_norm.shape)
         # node prob
-        # q = mfg.srcdata[self.node_prob]
         q_ij = mfg.edata['q_ij']
         # \frac{\alpha_{ij}^2}{k_i}
         alpha_div_k_i = dgl.ops.e_div_v(mfg, alpha**2, k_i)
         alpha_div_k_i = torch.nan_to_num(alpha_div_k_i, posinf=0)
-        # print()
-        # print('alpha_div_k_i=========', alpha_div_k_i.min().tolist(), alpha_div_k_i.max().tolist())
-
         # \frac{\|h_j\|_2^2}{q_{ij}^2}
         h_j_norm_div_q_j = dgl.ops.u_div_e(mfg, h_j_norm ** 2, q_ij ** 2)
-        # print('h_j_norm_div_q_j=========', h_j_norm_div_q_j.min().tolist(), h_j_norm_div_q_j.max().tolist())
-
         # \frac{\alpha_{ij}^2}{k\cdot q_j^2} \|h_j\|_2^2, calculate rewards
         rewards = alpha_div_k_i * h_j_norm_div_q_j
         # store rewards inside the block data
-        # print('rewards=========', rewards.min(), rewards.max())
         mfg.edata['rewards'] = rewards
 
     def update_exp3_weights(self, idx, mfg, g):
@@ -246,21 +218,19 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
             mfgs (DGLBlock): the blocks (in top-down format) to compute exp3 edge weight for
         """
         # Number of nodes to select in each iteration (sample size or number of arms).
-        k_i = mfg.in_degrees()[:len(mfg.dstdata[dgl.NID].long())]
-        # Number of nodes in the current subgraph (neigbor of a node or degree)
-        n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()]
+        k_i = mfg.in_degrees()[:len(mfg.dstdata[dgl.NID].long())].bfloat16()
+        # Number of nodes in the current subgraph (neighbor of a node or degree)
+        n_i = g.in_degrees()[mfg.dstdata[dgl.NID].long()].bfloat16()
 
         # Calculate the delta value for exp3
         # delta: \sqrt{\frac{(1 - \eta) \eta^4 k^5 \ln(\frac{n}{k})}{T n^4}}
         # nom = (1-self.eta)*(self.eta**4)*(k_i**5)*torch.log(n_i/k_i)
         # dom = (self.T*n_i**4)
         # delta = torch.sqrt(nom/dom)
-        # delta = torch.nan_to_num(delta)
-        # print('delta', delta.topk(5))
 
-        # delta = self.eta / n_i**2
-        delta = self.eta #/ 10000
-        # delta = 0.01
+        # Using a constant delta value
+        # delta = self.eta / 1000000 # in case of large graphs to avoid overflow
+        delta = 0.01
 
         # The rewards obtained for each node in the previous iteration
         rewards = mfg.edata['rewards'].clone().detach()
@@ -277,7 +247,6 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # update weights
         self.exp3_weights[idx][mfg.edata[dgl.EID].long()] *= exp_rewards
         self.exp3_weights[idx] = torch.nn.functional.normalize(self.exp3_weights[idx], p=1, dim=0)
-
     
     def exp3(self, mfgs, g):
         """
@@ -290,6 +259,7 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         """
         # loop over all blocks (layers)
         for idx, mfg in enumerate(mfgs):
+            # calculate alpha
             alpha = self.calculate_alpha(mfg)
             # calculate rewards
             self.calculate_rewards(idx, mfg, g, alpha)
@@ -332,7 +302,6 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         eg.edata[dgl.EID] = sg.edata[dgl.EID][eg.edata[dgl.EID].long()]
         # update the first subgraph with the updated edge subgraph
         sg = eg
-        # # print('sg', sg)
         # get the original node ids from g
         nids = insg.ndata[dgl.NID][sg.ndata[dgl.NID].long()]
 
@@ -349,9 +318,6 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         d = sg.in_degrees()
         # multiply W_tilde by d divided by W_tilde_sum
         W_tilde = dgl.ops.e_mul_v(sg, W_tilde, d / W_tilde_sum)
-        # print('W_tilde', W_tilde)
-
-        # W_tilde = dgl.ops.e_mul_v(sg, W, d[u_nodes].float())
 
         block = dgl.to_block(sg, seed_nodes_idx.type(sg.idtype))
         # update the edge data with W_tilde
@@ -359,8 +325,6 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
         # add edge prob
         block.edata['q_ij'] = W
         # add node prob
-        # print('P', P, P.shape)
-        # print()
         block.srcdata[self.node_prob] = P
 
         # get node ID mapping for source nodes
@@ -376,53 +340,43 @@ class BanditLadiesSampler(dgl.dataloading.BlockSampler): # consider to use unbia
     
     def sample_blocks(self, g, seed_nodes, exclude_eids=None):
         if self.exp3_weights == None:
-          self.exp3_weights = torch.ones(len(self.nodes_per_layer), g.num_edges()).to(g.device)
+          self.exp3_weights = torch.ones(len(self.nodes_per_layer), g.num_edges()).to(g.device).bfloat16()
         
-        # convert seed_nodes IDs to tensor
-        # seed_nodes = torch.tensor(seed_nodes)
         # copy seed_nodes to output_nodes (seed_nodes will be updated, output_nodes not)
         output_nodes = seed_nodes
         # empty list 
         blocks = []
         # loop on the reverse of block IDs
-        # print('+'*30)
         for block_id in reversed(range(len(self.nodes_per_layer))):
-            # print('-'*10, f'BLOCK{block_id}', '-'*10)
             # get the number of sample from nodes_per_layer per each block
             num_nodes_to_sample = self.nodes_per_layer[block_id]
             # calc exp3_prob, 1 / N_i
             edge_prob, insg = self.exp3_probabilities(block_id, g, seed_nodes)
-            # print('exp3_prob', edge_prob, edge_prob.shape)
-            # self.converge[block_id].append(edge_prob.tolist())
             # run compute_prob to get the unnormalized prob and subgraph
             node_prob = self.compute_prob(insg, seed_nodes, edge_prob, num_nodes_to_sample)
-            # print('node_prob', node_prob, )
             # get the edge prob from the original graph (exp3)
             W = edge_prob
             # sample the best n neighbor nodes from given the probabilities of neighbors (and the current nodes)
             chosen_nodes = self.select_neighbors(node_prob, num_nodes_to_sample)
-            # print('chosen_nodes', chosen_nodes, chosen_nodes.shape)
             # generate block for the sampled nodes and the previous nodes
             block = self.generate_block(insg, chosen_nodes.type(g.idtype), seed_nodes.type(g.idtype), node_prob, W)
             # update the seed_nodes with the sampled neighbors nodes to sample another block foe them in the next iteration
             seed_nodes = block.srcdata[dgl.NID]
             # add blocks at the beginning of blocks list (top-down)
             blocks.insert(0, block)
-        # print('+'*30)
         return seed_nodes, output_nodes, blocks
 
 class PoissonBanditLadiesSampler(BanditLadiesSampler):
     def __init__(
         self, nodes_per_layer, importance_sampling=True, weight='w', out_weight='edge_weights',
         node_embedding='nfeat', node_prob='node_prob', replace=False, eta=0.4, num_steps=5000,
-        allow_zero_in_degree=False, model='sage'
+        model='sage'
     ):
         super().__init__(
             nodes_per_layer, importance_sampling, weight, out_weight,
             node_embedding, node_prob, replace, eta, num_steps,
-            allow_zero_in_degree, model)
+            model)
         self.eps = 0.9999
-        self.allow_zero_in_degree = allow_zero_in_degree
 
     def compute_prob(self, insg, seed_nodes, edge_prob, num):
         """
@@ -445,7 +399,7 @@ class PoissonBanditLadiesSampler(BanditLadiesSampler):
                 break
             else:
                 c *= num / S
-        # if not self.allow_zero_in_degree:
+
         skip_nodes = find_indices_in(seed_nodes, insg.ndata[dgl.NID])
         prob[skip_nodes] = float("inf")
 
