@@ -1,6 +1,8 @@
 # BLISS (BanditLadies)
 
-Implementation for *"BLISS: Bandit Layer Importance Sampling Strategy for Efficient Training of Graph Neural Networks"* paper.
+[![Paper PDF](https://img.shields.io/badge/Paper-PDF-green.svg)](https://openreview.net/pdf?id=VaHubA7Pwv) [![Paper](https://img.shields.io/badge/Paper-OpenReview-b31b1b.svg)](https://openreview.net/forum?id=VaHubA7Pwv) [![Poster](https://img.shields.io/badge/Poster-NeurIPS_2025-purple.svg)](https://neurips.cc/virtual/2025/loc/san-diego/133005) [![NeurIPS MusIML 2025 Workshop](https://img.shields.io/badge/NeurIPS_MusIML_Workshop-2025-blue.svg)](https://neurips.cc/virtual/2025/loc/san-diego/133005) 
+
+Implementation for *"BLISS: Bandit Layer Importance Sampling Strategy for Efficient Training of Graph Neural Networks"* paper, accepted at the **NeurIPS 2025 MusIML Workshop**.
 
 ## Abstract
 Graph neural networks (GNNs) have become powerful tools for learning representations of graph-structured data. However, training GNNs on large graphs can be computationally expensive, especially when considering all neighbor nodes for each node in the graph. To address the memory and computational bottlenecks encountered when training GNNs on large-scale graphs, we introduce BLISS, a Bandit Layer Importance Sampling Strategy. This approach uses multi-armed bandits to dynamically select the most informative nodes within each layer, striking an optimal balance between exploration and exploitation to ensure both coverage and efficient message passing. Unlike existing sampling methods, BLISS adapts to the evolving graph structure and node importance, leading to more informed node selection and better performance. It demonstrates versatility by effectively working with both Graph Convolutional Networks (GCNs) and Graph Attention Networks (GATs), with the bandit framework capable of adapting the selection policy to the specific message aggregation and attention mechanisms of each model. Comprehensive experiments on benchmark datasets show that BLISS maintains or even exceeds the accuracy of full-batch GNN training.
@@ -26,3 +28,15 @@ For reproducibility, from table 3 in the paper:
 | Pubmed   | 32         | [512, 256, 128]   | 1000   |
 | Reddit   | 256        | [4096, 2048, 1024]| 3000   |
 | Yelp     | 256        | [4096, 2048, 1024]| 10000  |
+
+## Citation
+```bibtex
+@inproceedings{
+alsaqa2025bliss,
+title={{BLISS}: Bandit Layer Importance Sampling Strategy for Efficient Training of Graph Neural Networks},
+author={Omar Alsaqa and Linh Thi Hoang and Muhammed Fatih Balin},
+booktitle={5th Muslims in ML Workshop co-located with NeurIPS 2025},
+year={2025},
+url={https://openreview.net/forum?id=VaHubA7Pwv}
+}
+```
