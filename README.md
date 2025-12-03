@@ -1,6 +1,6 @@
 # BLISS (BanditLadies)
 
-[![Paper PDF](https://img.shields.io/badge/Paper-PDF-green.svg)](https://openreview.net/pdf?id=VaHubA7Pwv) [![Paper](https://img.shields.io/badge/Paper-OpenReview-b31b1b.svg)](https://openreview.net/forum?id=VaHubA7Pwv) [![Poster](https://img.shields.io/badge/Poster-NeurIPS_2025-purple.svg)]([https://neurips.cc/virtual/2025/loc/san-diego/133005](https://neurips.cc/media/neurips-2025/Slides/133005.pdf)) [![NeurIPS MusIML 2025 Workshop](https://img.shields.io/badge/NeurIPS_MusIML_Workshop-2025-blue.svg)](https://neurips.cc/virtual/2025/loc/san-diego/133005) 
+[![Paper PDF](https://img.shields.io/badge/Paper-PDF-green.svg)](https://openreview.net/pdf?id=VaHubA7Pwv) [![Paper](https://img.shields.io/badge/Paper-OpenReview-b31b1b.svg)](https://openreview.net/forum?id=VaHubA7Pwv) [![Poster](https://img.shields.io/badge/Poster-NeurIPS_2025-purple.svg)](https://neurips.cc/media/neurips-2025/Slides/133005.pdf) [![NeurIPS MusIML 2025 Workshop](https://img.shields.io/badge/NeurIPS_MusIML_Workshop-2025-blue.svg)](https://neurips.cc/virtual/2025/loc/san-diego/133005) 
 
 Implementation for *"BLISS: Bandit Layer Importance Sampling Strategy for Efficient Training of Graph Neural Networks"* paper, accepted at the **NeurIPS 2025 MusIML Workshop**.
 
